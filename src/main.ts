@@ -480,7 +480,7 @@ async function main() {
     // whichever camera is active) even while flying - it uses screen-space projection, not
     // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
     selectionUI.update();
-    economyManager.update(dt);
+    economyManager.update(dt, scene.activeCamera!.globalPosition);
 
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);

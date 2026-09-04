@@ -205,3 +205,39 @@ export function createHullMaterial(scene: Scene, faction: FactionId, seed: numbe
   materialCache.set(cacheKey, material);
   return material;
 }
+
+const iconMaterialCache = new Map<FactionId, StandardMaterial>();
+
+/**
+ * Builds (and caches, per faction) the small glowing-dot icon texture/material a Ship swaps to
+ * once it's far from the camera (see ship.ts's updateLod) - a Homeworld-style billboarded
+ * sprite, same radial-gradient-on-a-DynamicTexture technique already used for Star's glow.
+ */
+export function createShipIconMaterial(scene: Scene, faction: FactionId): StandardMaterial {
+  const cached = iconMaterialCache.get(faction);
+  if (cached) return cached;
+
+  const palette = FACTION_PALETTES[faction];
+  const size = 32;
+  const texture = new DynamicTexture(`shipIconTexture_${faction}`, size, scene, false);
+  texture.hasAlpha = true;
+  const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+  const cx = size / 2;
+  const cy = size / 2;
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
+  gradient.addColorStop(0, colorToCss(new Color3(1, 1, 1)));
+  gradient.addColorStop(0.4, colorToCss(palette.accent, 0.9));
+  gradient.addColorStop(1, colorToCss(palette.accent, 0));
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  texture.update(false);
+
+  const material = new StandardMaterial(`shipIconMaterial_${faction}`, scene);
+  material.diffuseTexture = texture;
+  material.opacityTexture = texture;
+  material.emissiveColor = Color3.White();
+  material.disableLighting = true;
+  material.backFaceCulling = false;
+  iconMaterialCache.set(faction, material);
+  return material;
+}

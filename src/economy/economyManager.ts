@@ -1,4 +1,4 @@
-import type { Scene } from "@babylonjs/core";
+import type { Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
 import { Base } from "./base";
 import { Station } from "./station";
@@ -39,7 +39,10 @@ export class EconomyManager {
     this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0])));
   }
 
-  update(deltaSeconds: number): void {
-    for (const ship of this.ships) ship.update(deltaSeconds, this.resolveStop);
+  /** @param cameraWorldPosition Used for Ship's cube<->billboard-icon LOD swap - ships are
+   * scattered system-wide, unlike SolarSystem.update's focused-body-local convention, so this
+   * needs the camera's true world position regardless of which mode/camera is currently active. */
+  update(deltaSeconds: number, cameraWorldPosition: Vector3): void {
+    for (const ship of this.ships) ship.update(deltaSeconds, cameraWorldPosition, this.resolveStop);
   }
 }
