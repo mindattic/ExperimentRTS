@@ -1,8 +1,9 @@
 import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3, VertexData } from "@babylonjs/core";
 import { PlanetTerrain } from "../terrain/planetTerrain";
 import { PlanetHeightfield } from "../terrain/heightfield";
+import type { HeightmapImageData } from "../terrain/heightmapImage";
 import { CelestialOrbit, type CelestialOrbitOptions } from "./celestialOrbit";
-import { bodyRadius, type BodyDef } from "./scale";
+import { bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
 import { mulberry32 } from "../terrain/prng";
 
 const GAS_GIANT_PALETTES: Record<string, [Color3, Color3]> = {
@@ -12,15 +13,14 @@ const GAS_GIANT_PALETTES: Record<string, [Color3, Color3]> = {
   Neptune: [new Color3(0.18, 0.28, 0.62), new Color3(0.32, 0.42, 0.78)],
 };
 
-function createGasGiantTexture(scene: Scene, name: string, seed: number): DynamicTexture {
+function createGasGiantTexture(scene: Scene, name: string, seed: number, width: number, height: number): DynamicTexture {
   const [low, high] = GAS_GIANT_PALETTES[name] ?? [new Color3(0.5, 0.5, 0.5), new Color3(0.8, 0.8, 0.8)];
-  const size = 512;
-  const texture = new DynamicTexture(`${name}Texture`, { width: size, height: size }, scene, false);
+  const texture = new DynamicTexture(`${name}Texture`, { width, height }, scene, false);
   const ctx = texture.getContext();
   const rand = mulberry32(seed);
   const bandCount = 18;
-  for (let y = 0; y < size; y++) {
-    const v = y / size;
+  for (let y = 0; y < height; y++) {
+    const v = y / height;
     const band = Math.sin(v * bandCount * Math.PI * 2 + rand() * 0.3) * 0.5 + 0.5;
     const turbulence = Math.sin(v * 47 + rand() * 6) * 0.08;
     const t = Math.min(1, Math.max(0, band + turbulence));
@@ -28,7 +28,7 @@ function createGasGiantTexture(scene: Scene, name: string, seed: number): Dynami
     const g = low.g + (high.g - low.g) * t;
     const b = low.b + (high.b - low.b) * t;
     ctx.fillStyle = `rgb(${(r * 255) | 0}, ${(g * 255) | 0}, ${(b * 255) | 0})`;
-    ctx.fillRect(0, y, size, 1);
+    ctx.fillRect(0, y, width, 1);
   }
   texture.update(false);
   return texture;
@@ -89,7 +89,13 @@ export class CelestialBody {
   readonly mesh: Mesh | null;
   readonly radius: number;
 
-  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions) {
+  /**
+   * @param heightmapImage A real elevation map preloaded for this body (see heightmapImage.ts
+   * and main.ts's preload step) - only meaningful for landable bodies; switches
+   * PlanetHeightfield to sample it instead of procedural noise. Omit to keep procedural
+   * terrain (Pluto/Eris, or if a real map failed to load).
+   */
+  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, heightmapImage?: HeightmapImageData) {
     this.def = def;
     this.orbit = new CelestialOrbit(scene, orbitOptions);
     this.radius = bodyRadius(def);
@@ -97,6 +103,7 @@ export class CelestialBody {
 
     if (this.landable) {
       this.terrain = new PlanetTerrain(scene, this.radius, def.seed, this.orbit.spinNode);
+      if (heightmapImage) this.terrain.heightfield.useImage(heightmapImage);
       this.mesh = null;
       // Seed root-level patches once up front (each call only budgets a few patches - three
       // calls comfortably covers all 6 root faces) using a point far enough away that no
@@ -111,7 +118,9 @@ export class CelestialBody {
       this.mesh = MeshBuilder.CreateSphere(`${def.name}Mesh`, { diameter: this.radius * 2, segments: 32 }, scene);
       this.mesh.parent = this.orbit.spinNode;
       const material = new StandardMaterial(`${def.name}Material`, scene);
-      material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed);
+      const maxTextureSize = scene.getEngine().getCaps().maxTextureSize;
+      const { width, height } = textureResolutionFor(def, maxTextureSize);
+      material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed, width, height);
       material.specularColor = Color3.Black();
       material.useLogarithmicDepth = true;
       this.mesh.material = material;

@@ -3,6 +3,7 @@ import { Fbm3 } from "./noise";
 import { TOPOLOGIES } from "./topology";
 import { mulberry32 } from "./prng";
 import { smoothstep } from "./mathUtils";
+import type { HeightmapImageData } from "./heightmapImage";
 
 interface BiomeSeed {
   x: number;
@@ -21,10 +22,18 @@ const BIOME_BLEND_SPAN = 0.18;
  */
 const ELEVATION_CAP = 65;
 
-/** Procedural, seeded elevation field for the whole planet, sampled directly on the unit sphere (seamless across cube-sphere faces). */
+/** Elevation amplitude, meters, applied to a real heightmap's normalized 0-1 sample range -
+ * matches the procedural path's own ELEVATION_CAP so real and procedural terrain read at a
+ * consistent scale (this project's "fun over accuracy" philosophy, not real-world meters). */
+const IMAGE_AMPLITUDE_METERS = 60;
+
+/** Elevation field for the whole planet, sampled directly on the unit sphere (seamless across
+ * cube-sphere faces) - either procedural noise (default) or a real heightmap image once
+ * useImage() is called (see heightmapImage.ts and SolarSystem's preload step in main.ts). */
 export class PlanetHeightfield {
   private readonly fbm: Fbm3;
   private readonly seeds: BiomeSeed[] = [];
+  private image: HeightmapImageData | null = null;
 
   constructor(seed: number) {
     this.fbm = new Fbm3(seed, 5, 2.05, 0.48);
@@ -43,8 +52,45 @@ export class PlanetHeightfield {
     }
   }
 
+  /** Switches this heightfield to sample a real elevation image instead of procedural noise -
+   * call once, after construction, when the body's real heightmap has finished loading. */
+  useImage(image: HeightmapImageData): void {
+    this.image = image;
+  }
+
   /** Elevation above/below the base planet radius, in meters, at a unit sphere direction. */
   elevationAt(dir: Vector3): number {
+    if (this.image) return this.elevationFromImage(this.image, dir);
+    return this.elevationFromNoise(dir);
+  }
+
+  private elevationFromImage(image: HeightmapImageData, dir: Vector3): number {
+    // Equirectangular convention matching the source photos: y is the polar axis, row 0 is
+    // the north pole, and longitude increases eastward from an arbitrary prime meridian (this
+    // game has no notion of a "real" Greenwich to align to, so any fixed convention is fine as
+    // long as it's used consistently for a given body).
+    const lat = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    const lon = Math.atan2(dir.z, dir.x);
+    const u = lon / (Math.PI * 2) + 0.5;
+    const v = 0.5 - lat / Math.PI;
+
+    const fx = u * image.width;
+    const fy = v * (image.height - 1);
+    const x0 = Math.floor(fx) % image.width;
+    const x1 = (x0 + 1) % image.width; // wraps at the antimeridian instead of clamping/seaming
+    const y0 = Math.max(0, Math.min(image.height - 1, Math.floor(fy)));
+    const y1 = Math.max(0, Math.min(image.height - 1, y0 + 1));
+    const tx = fx - Math.floor(fx);
+    const ty = fy - y0;
+
+    const sample = (x: number, y: number) => image.samples[y * image.width + x] / 255;
+    const top = sample(x0, y0) * (1 - tx) + sample(x1, y0) * tx;
+    const bottom = sample(x0, y1) * (1 - tx) + sample(x1, y1) * tx;
+    const t = top * (1 - ty) + bottom * ty;
+    return (t - 0.5) * 2 * IMAGE_AMPLITUDE_METERS;
+  }
+
+  private elevationFromNoise(dir: Vector3): number {
     let d0 = Infinity;
     let d1 = Infinity;
     let i0 = 0;

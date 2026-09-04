@@ -18,7 +18,8 @@ import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { FreeFlyCamera } from "./camera/freeFlyCamera";
 import { computeLookRotationToRef } from "./camera/lookRotation";
 import { SolarSystem } from "./solarSystem/solarSystem";
-import { BODY_DEFS, sceneDistance } from "./solarSystem/scale";
+import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor } from "./solarSystem/scale";
+import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
 import { SelectionUI } from "./ui/selection";
 import { SettingsMenu } from "./ui/settingsMenu";
 import { keybindings } from "./input/keybindings";
@@ -65,6 +66,33 @@ function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
 
+/** Loads every body's real heightmap (see scale.ts's HEIGHTMAP_SOURCES) up front, resampled to
+ * its size-proportional target resolution, before the solar system is built - CelestialBody
+ * needs the fully-decoded image synchronously at construction time (PlanetHeightfield.elevationAt
+ * is called many times per terrain patch), so this can't happen lazily per-body later. A body
+ * whose real map fails to load just keeps PlanetHeightfield's procedural fallback instead of
+ * blocking the whole scene. */
+async function preloadHeightmaps(maxTextureSize: number): Promise<Partial<Record<string, HeightmapImageData>>> {
+  const results = await Promise.all(
+    BODY_DEFS.filter((def) => HEIGHTMAP_SOURCES[def.name]).map(async (def) => {
+      const source = HEIGHTMAP_SOURCES[def.name]!;
+      const { width, height } = textureResolutionFor(def, maxTextureSize);
+      try {
+        const image = await loadHeightmapImage(source.url, width, height, source.minSample ?? 0);
+        return [def.name, image] as const;
+      } catch (err) {
+        console.warn(`Failed to load real heightmap for ${def.name}, using procedural terrain instead.`, err);
+        return null;
+      }
+    }),
+  );
+  const images: Partial<Record<string, HeightmapImageData>> = {};
+  for (const result of results) {
+    if (result) images[result[0]] = result[1];
+  }
+  return images;
+}
+
 async function main() {
   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
   const scene = new Scene(engine);
@@ -80,7 +108,8 @@ async function main() {
   // side is always at least dimly visible.
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
-  const solarSystem = new SolarSystem(scene);
+  const heightmapImages = await preloadHeightmaps(engine.getCaps().maxTextureSize);
+  const solarSystem = new SolarSystem(scene, heightmapImages);
   let focused = solarSystem.focused;
   let thresholds = radiusThresholds(focused.radius);
 

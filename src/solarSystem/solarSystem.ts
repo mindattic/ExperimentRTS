@@ -2,8 +2,9 @@ import { DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
 import { Star } from "../environment/star";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
-import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, STAR_RADIUS } from "./scale";
+import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
 import { mulberry32 } from "../terrain/prng";
+import type { HeightmapImageData } from "../terrain/heightmapImage";
 
 const tmpSunDirection = new Vector3();
 
@@ -19,27 +20,65 @@ export class SolarSystem {
   readonly belt: AsteroidBelt;
   focusedIndex: number;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, heightmapImages: Partial<Record<string, HeightmapImageData>> = {}) {
     this.star = new Star(scene, STAR_RADIUS);
 
     const rand = mulberry32(777);
     const baseOrbitAxis = new Vector3(0.12, 0.98, 0.15).normalize();
     const baseSpinAxis = new Vector3(0.15, 0.97, -0.18).normalize();
 
-    this.bodies = BODY_DEFS.map((def, index) => {
-      const body = new CelestialBody(scene, def, {
-        name: def.name,
-        semiMajorAxis: sceneDistance(def.auDistance),
-        eccentricity: def.eccentricity,
-        orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
-        orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
-        spinPeriodSeconds: def.retrograde ? -spinPeriodSeconds(def) : spinPeriodSeconds(def),
-        spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
-        startAngle: (index / BODY_DEFS.length) * Math.PI * 2 + rand() * 0.5,
-      });
+    // Two passes: bodies orbiting the star directly, then bodies orbiting another body (moons -
+    // see BodyDef.orbitsAround) once their parent already exists, so their orbitNode can be
+    // reparented to it. That reparenting is the whole trick: CelestialOrbit's ellipse math
+    // (origin-focused, in positionAt()) doesn't need to know anything about moons at all - once
+    // its orbitNode's parent is the planet's own orbitNode instead of the scene root, ordinary
+    // scene-graph composition carries the moon's small local ellipse along with wherever the
+    // planet currently is, for free.
+    const starOrbitingDefs = BODY_DEFS.filter((def) => !def.orbitsAround);
+    const moonDefs = BODY_DEFS.filter((def) => def.orbitsAround);
+
+    this.bodies = starOrbitingDefs.map((def, index) => {
+      const body = new CelestialBody(
+        scene,
+        def,
+        {
+          name: def.name,
+          semiMajorAxis: sceneDistance(def.auDistance),
+          eccentricity: def.eccentricity,
+          orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
+          orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
+          spinPeriodSeconds: def.retrograde ? -spinPeriodSeconds(def) : spinPeriodSeconds(def),
+          spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
+          startAngle: (index / starOrbitingDefs.length) * Math.PI * 2 + rand() * 0.5,
+        },
+        heightmapImages[def.name],
+      );
       body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`);
       return body;
     });
+
+    for (const def of moonDefs) {
+      const parent = this.bodies.find((b) => b.def.name === def.orbitsAround);
+      if (!parent) continue; // BODY_DEFS is static and self-consistent - shouldn't happen
+      const moon = new CelestialBody(
+        scene,
+        def,
+        {
+          name: def.name,
+          semiMajorAxis: parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6),
+          eccentricity: def.eccentricity,
+          orbitPeriodSeconds: moonOrbitPeriodSeconds(def),
+          orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.2),
+          spinPeriodSeconds: def.retrograde ? -spinPeriodSeconds(def) : spinPeriodSeconds(def),
+          spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
+          startAngle: rand() * Math.PI * 2,
+        },
+        heightmapImages[def.name],
+      );
+      moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
+      moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, undefined, parent.orbit.orbitNode);
+      this.bodies.push(moon);
+    }
 
     const marsIndex = BODY_DEFS.findIndex((b) => b.name === "Mars");
     const jupiterIndex = BODY_DEFS.findIndex((b) => b.name === "Jupiter");
