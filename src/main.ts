@@ -2,16 +2,18 @@ import "./style.css";
 
 import { EngineFactory, type AbstractEngine, Scene, Vector3, Color3, Color4, HemisphericLight, DirectionalLight } from "@babylonjs/core";
 
-import { PLANET_RADIUS, PLANET_SEED } from "./config";
 import { PlanetTerrain } from "./terrain/planetTerrain";
 import { RtsGroundCamera } from "./camera/rtsGroundCamera";
 import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { Star } from "./environment/star";
-import { PlanetMotion } from "./environment/planetMotion";
-import { createStarfield } from "./environment/starfield";
+import { CelestialOrbit } from "./solarSystem/celestialOrbit";
+import { BODY_DEFS, bodyRadius, sceneDistance, orbitPeriodSeconds, STAR_RADIUS } from "./solarSystem/scale";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const reorientButton = document.getElementById("reorientButton") as HTMLButtonElement;
+
+const EARTH = BODY_DEFS.find((b) => b.name === "Earth")!;
+const PLANET_RADIUS = bodyRadius(EARTH);
 
 /** Orbit radius below which we hand off to the fixed RTS ground camera. */
 const ENTER_GROUND_RADIUS = PLANET_RADIUS * 1.06;
@@ -25,8 +27,8 @@ const EXIT_ORBIT_RADIUS = PLANET_RADIUS * 1.25;
 const MIN_ORBIT_RADIUS = PLANET_RADIUS * 1.02;
 /** Zoomed all the way out, the planet should still read clearly as a sphere, not a speck. */
 const MAX_ORBIT_RADIUS = PLANET_RADIUS * 15;
-/** Comfortably past the star's orbit distance (40x planet radius) so it's never clipped. */
-const FAR_CLIP = PLANET_RADIUS * 80;
+/** Comfortably past the star's orbit distance so it's never clipped. */
+const FAR_CLIP = sceneDistance(EARTH.auDistance) * 3;
 
 const tmpSunDirection = new Vector3();
 
@@ -34,8 +36,6 @@ async function main() {
   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.01, 0.01, 0.02, 1);
-
-  createStarfield(scene, FAR_CLIP * 0.95);
 
   const sun = new DirectionalLight("sun", new Vector3(-0.5, -0.8, 0.3), scene);
   sun.intensity = 1.1;
@@ -47,19 +47,29 @@ async function main() {
   // side is always at least dimly visible.
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
-  new Star(scene, PLANET_RADIUS);
-  const motion = new PlanetMotion(scene, PLANET_RADIUS);
-  motion.createOrbitLine(scene);
+  new Star(scene, STAR_RADIUS);
 
-  const terrain = new PlanetTerrain(scene, PLANET_RADIUS, PLANET_SEED, motion.spinNode);
+  const orbit = new CelestialOrbit(scene, {
+    name: "earth",
+    semiMajorAxis: sceneDistance(EARTH.auDistance),
+    eccentricity: EARTH.eccentricity,
+    orbitPeriodSeconds: orbitPeriodSeconds(EARTH.orbitYears),
+    orbitAxis: new Vector3(0.12, 0.98, 0.15).normalize(),
+    spinPeriodSeconds: EARTH.spinPeriodSeconds,
+    spinAxis: new Vector3(0.15, 0.97, -0.18).normalize(),
+    startAngle: 0,
+  });
+  orbit.createOrbitLine(scene, "earthOrbitLine");
+
+  const terrain = new PlanetTerrain(scene, PLANET_RADIUS, EARTH.seed, orbit.spinNode);
 
   const orbitCamera = new OrbitTrackballCamera(scene, canvas, PLANET_RADIUS * 3.5, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS, FAR_CLIP);
-  orbitCamera.camera.parent = motion.spinNode;
+  orbitCamera.camera.parent = orbit.spinNode;
   scene.activeCamera = orbitCamera.camera;
   orbitCamera.attach();
 
   const groundCamera = new RtsGroundCamera(scene, canvas, terrain.heightfield);
-  groundCamera.camera.parent = motion.spinNode;
+  groundCamera.camera.parent = orbit.spinNode;
 
   let mode: "orbit" | "ground" = "orbit";
   let escapePressed = false;
@@ -95,8 +105,8 @@ async function main() {
   engine.runRenderLoop(() => {
     const dt = engine.getDeltaTime() / 1000;
 
-    motion.update(dt);
-    motion.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
+    orbit.update(dt);
+    orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
     sun.direction.copyFrom(tmpSunDirection);
 
     if (mode === "orbit") {
