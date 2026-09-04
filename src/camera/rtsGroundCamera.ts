@@ -1,11 +1,13 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import type { PlanetHeightfield } from "../terrain/heightfield";
+import { keybindings } from "../input/keybindings";
 
 const PAN_SPEED = 220; // units/sec at planet-surface scale
 const MIN_EYE_HEIGHT = 30;
 const MAX_EYE_HEIGHT = 160;
 const ZOOM_SPEED = 90; // eye-height units per wheel notch
 const PITCH_DEG = 55;
+const HEADING_ROTATE_SPEED = 1.2; // rad/s while a rotate key is held
 /** How long the entry blend from the orbit camera's last position runs. */
 const ENTRY_BLEND_SECONDS = 0.35;
 /** Ground-plane units of pan per pixel of drag, per unit of eyeHeight (so drag feels
@@ -22,6 +24,14 @@ const tmpLookDir = new Vector3();
 const tmpForward = new Vector3();
 const tmpTargetRot = new Quaternion();
 const tmpPanAxis = new Vector3();
+const tmpHeadingQuat = new Quaternion();
+const tmpHeadingMatrix = new Matrix();
+const tmpRotatedEast = new Vector3();
+const tmpRotatedNorth = new Vector3();
+const tmpHoverPoint = new Vector3();
+const tmpHoverDir = new Vector3();
+/** Minimum clearance kept above the higher of (anchor elevation, hover-point elevation), so the camera never scrapes nearby terrain even when it's steeper than right under the anchor. */
+const MIN_CLEARANCE = 35;
 
 function easeOutCubic(t: number): number {
   const u = 1 - t;
@@ -39,6 +49,10 @@ export class RtsGroundCamera {
   readonly camera: UniversalCamera;
   readonly anchor = new Vector3(0, 1, 0);
   eyeHeight = 70;
+  /** Yaw offset applied on top of the anchor's natural north-facing tangent frame, rotated
+   * with the groundRotateLeft/Right keys (Q/E by default) - rotates both the view and the
+   * pan directions together. */
+  private heading = 0;
 
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
@@ -154,24 +168,37 @@ export class RtsGroundCamera {
   private localBasis(east: Vector3, north: Vector3): void {
     // Cross order here is chosen so `east` matches the camera's actual screen-right (verified
     // empirically against the rendered view, not derived analytically) - swapping it flips
-    // ArrowLeft/ArrowRight and A/D.
-    Vector3.CrossToRef(this.anchor, Vector3.Up(), east);
+    // ArrowLeft/ArrowRight and A/D. Flipped again per live feedback that A/D still felt
+    // backwards after the Q/E heading-rotation feature was added.
+    Vector3.CrossToRef(Vector3.Up(), this.anchor, east);
     if (east.lengthSquared() < 1e-6) {
-      Vector3.CrossToRef(this.anchor, Vector3.Forward(), east);
+      Vector3.CrossToRef(Vector3.Forward(), this.anchor, east);
     }
     east.normalize();
     Vector3.CrossToRef(this.anchor, east, north);
     north.normalize();
+
+    if (this.heading !== 0) {
+      Quaternion.RotationAxisToRef(this.anchor, this.heading, tmpHeadingQuat);
+      Matrix.FromQuaternionToRef(tmpHeadingQuat, tmpHeadingMatrix);
+      Vector3.TransformCoordinatesToRef(east, tmpHeadingMatrix, tmpRotatedEast);
+      Vector3.TransformCoordinatesToRef(north, tmpHeadingMatrix, tmpRotatedNorth);
+      east.copyFrom(tmpRotatedEast);
+      north.copyFrom(tmpRotatedNorth);
+    }
   }
 
   update(deltaSeconds: number, planetRadius: number): void {
+    if (this.keys.has(keybindings.get("groundRotateRight"))) this.heading += HEADING_ROTATE_SPEED * deltaSeconds;
+    if (this.keys.has(keybindings.get("groundRotateLeft"))) this.heading -= HEADING_ROTATE_SPEED * deltaSeconds;
+
     this.localBasis(tmpEast, tmpNorth);
 
     tmpMove.setAll(0);
-    if (this.keys.has("ArrowUp") || this.keys.has("KeyW")) tmpMove.addInPlace(tmpNorth);
-    if (this.keys.has("ArrowDown") || this.keys.has("KeyS")) tmpMove.subtractInPlace(tmpNorth);
-    if (this.keys.has("ArrowRight") || this.keys.has("KeyD")) tmpMove.addInPlace(tmpEast);
-    if (this.keys.has("ArrowLeft") || this.keys.has("KeyA")) tmpMove.subtractInPlace(tmpEast);
+    if (this.keys.has("ArrowUp") || this.keys.has(keybindings.get("groundForward"))) tmpMove.addInPlace(tmpNorth);
+    if (this.keys.has("ArrowDown") || this.keys.has(keybindings.get("groundBackward"))) tmpMove.subtractInPlace(tmpNorth);
+    if (this.keys.has("ArrowRight") || this.keys.has(keybindings.get("groundRight"))) tmpMove.addInPlace(tmpEast);
+    if (this.keys.has("ArrowLeft") || this.keys.has(keybindings.get("groundLeft"))) tmpMove.subtractInPlace(tmpEast);
 
     if (tmpMove.lengthSquared() > 0) {
       tmpMove.normalize();
@@ -207,8 +234,24 @@ export class RtsGroundCamera {
     const elevation = this.heightfield.elevationAt(this.anchor);
     const groundPos = this.anchor.scale(planetRadius + elevation);
     const distanceBack = this.eyeHeight * 0.9;
-    const heightUp = this.eyeHeight * Math.sin((PITCH_DEG * Math.PI) / 180);
     const pullback = this.eyeHeight * Math.cos((PITCH_DEG * Math.PI) / 180) + distanceBack;
+
+    // Sample elevation at roughly where the camera actually hovers (anchor rotated "south" by
+    // the pullback distance), not just under the anchor - nearby terrain can be steeper than
+    // right under the look-at point, and using only the anchor's elevation let the camera dip
+    // into slopes it was flying past rather than looking down at. Same rotate-by-angle pattern
+    // as panning above, moving in the -north (south) direction to match the pullback offset.
+    tmpHoverDir.copyFrom(tmpNorth).scaleInPlace(-1);
+    Vector3.CrossToRef(this.anchor, tmpHoverDir, tmpPanAxis);
+    tmpPanAxis.normalize();
+    const hoverAngle = pullback / planetRadius;
+    Quaternion.RotationAxisToRef(tmpPanAxis, hoverAngle, tmpQuat);
+    Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
+    Vector3.TransformCoordinatesToRef(this.anchor, tmpMatrix, tmpHoverPoint);
+    tmpHoverPoint.normalize();
+    const hoverElevation = this.heightfield.elevationAt(tmpHoverPoint);
+
+    const heightUp = Math.max(this.eyeHeight * Math.sin((PITCH_DEG * Math.PI) / 180), hoverElevation - elevation + MIN_CLEARANCE);
 
     tmpTargetPos.copyFrom(groundPos).addInPlace(this.anchor.scale(heightUp)).subtractInPlace(tmpNorth.scale(pullback));
 

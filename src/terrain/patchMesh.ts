@@ -12,16 +12,13 @@ export interface PatchMeshData {
 
 const scratch = new Vector3();
 
-const LOW_COLOR: readonly number[] = [0.5, 0.38, 0.25];
-const MID_COLOR: readonly number[] = [0.8, 0.65, 0.45];
-// Mountain rock, not pale sandstone: a deep, saturated rust/umber so peaks read as higher and
-// harder than the surrounding dunes rather than fading out light.
-const HIGH_COLOR: readonly number[] = [0.32, 0.17, 0.12];
-
+// Default heightmap convention: black = lowest point, white = highest point. A plain
+// grayscale gradient rather than the earlier sand/rust palette - makes the actual height
+// data trivially readable at a glance, and gives Phase 5's terrain shader a clean starting
+// signal to key its texture blending off of.
 function colorForElevation(elevation: number, out: number[]) {
   const t = Math.min(1, Math.max(0, (elevation + 15) / 55));
-  const [a, b, k] = t < 0.55 ? [LOW_COLOR, MID_COLOR, t / 0.55] : [MID_COLOR, HIGH_COLOR, (t - 0.55) / 0.45];
-  out.push(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, 1);
+  out.push(t, t, t, 1);
 }
 
 /**

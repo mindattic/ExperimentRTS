@@ -1,4 +1,5 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
+import { keybindings } from "../input/keybindings";
 
 const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
 const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
@@ -180,10 +181,10 @@ export class OrbitTrackballCamera {
   update(deltaSeconds: number): void {
     let keyYaw = 0;
     let keyPitch = 0;
-    if (this.keys.has("KeyD")) keyYaw += 1;
-    if (this.keys.has("KeyA")) keyYaw -= 1;
-    if (this.keys.has("KeyW")) keyPitch += 1;
-    if (this.keys.has("KeyS")) keyPitch -= 1;
+    if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
+    if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
+    if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
+    if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
     if (keyYaw !== 0 || keyPitch !== 0) {
       this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
       this.reorienting = false;

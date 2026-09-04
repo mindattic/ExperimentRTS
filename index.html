@@ -8,7 +8,40 @@
   </head>
   <body>
     <canvas id="renderCanvas"></canvas>
-    <button id="reorientButton" type="button">Reorient</button>
+
+    <button id="menuButton" class="icon-button" type="button" aria-label="Menu">&#9776;</button>
+    <div id="menuDropdown" class="menu-dropdown" hidden>
+      <button id="reorientMenuItem" type="button">Reorient camera</button>
+      <button id="freeCamMenuItem" type="button">Toggle free cam</button>
+      <button id="settingsMenuItem" type="button">Settings&hellip;</button>
+    </div>
+
+    <div id="settingsModal" class="modal-overlay" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <span>Settings</span>
+          <button id="settingsCloseButton" class="icon-button" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-section">
+          <div class="modal-section-title">Graphics</div>
+          <label class="modal-row">
+            <span>Terrain quality</span>
+            <select id="terrainQualitySelect"></select>
+          </label>
+          <div class="modal-hint">Applies to newly-visited planets (or after reload) - it doesn't re-mesh the planet you're currently on.</div>
+          <label class="modal-row">
+            <span>Night brightness</span>
+            <input id="nightBrightnessSlider" type="range" min="0" max="100" step="1" />
+          </label>
+        </div>
+        <div class="modal-section">
+          <div class="modal-section-title">Controls</div>
+          <div id="keybindList" class="keybind-list"></div>
+          <button id="resetBindingsButton" class="text-button" type="button">Reset to defaults</button>
+        </div>
+      </div>
+    </div>
+
     <div id="focusList" class="focus-list" hidden>
       <div class="focus-list-title">Focus</div>
       <ol id="focusListItems"></ol>
@@ -20,6 +53,7 @@
       <span class="corner br"></span>
       <div id="reticleLabel" class="reticle-label"></div>
     </div>
+    <div id="freeCamBadge" class="free-cam-badge" hidden>FREE CAM</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

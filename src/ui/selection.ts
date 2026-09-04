@@ -139,7 +139,9 @@ export class SelectionUI {
     const edgePoint = center.add(Vector3.Up().scale(body.radius));
     const screenEdge = Vector3.Project(edgePoint, Matrix.Identity(), transform, viewport);
     const apparentRadius = Math.abs(screenCenter.y - screenEdge.y);
-    const size = Math.min(MAX_RETICLE_SIZE, Math.max(MIN_RETICLE_SIZE, apparentRadius * 2.4));
+    // Corners sit outside the planet's silhouette, not overlapping it: box half-size is
+    // ~1.7x the apparent radius, giving clear margin between the bracket and the body itself.
+    const size = Math.min(MAX_RETICLE_SIZE, Math.max(MIN_RETICLE_SIZE, apparentRadius * 3.4));
 
     this.reticleEl.hidden = false;
     this.reticleEl.style.transform = `translate(${screenCenter.x - size / 2}px, ${screenCenter.y - size / 2}px)`;

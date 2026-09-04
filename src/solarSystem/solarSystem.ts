@@ -33,7 +33,7 @@ export class SolarSystem {
         eccentricity: def.eccentricity,
         orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
         orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
-        spinPeriodSeconds: def.spinPeriodSeconds,
+        spinPeriodSeconds: def.retrograde ? -def.spinPeriodSeconds : def.spinPeriodSeconds,
         spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
         startAngle: (index / BODY_DEFS.length) * Math.PI * 2 + rand() * 0.5,
       });

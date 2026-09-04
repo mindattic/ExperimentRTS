@@ -1,4 +1,4 @@
-import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
+import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3, VertexData } from "@babylonjs/core";
 import { PlanetTerrain } from "../terrain/planetTerrain";
 import { PlanetHeightfield } from "../terrain/heightfield";
 import { CelestialOrbit, type CelestialOrbitOptions } from "./celestialOrbit";
@@ -32,6 +32,48 @@ function createGasGiantTexture(scene: Scene, name: string, seed: number): Dynami
   }
   texture.update(false);
   return texture;
+}
+
+/** A flat, semi-transparent annulus in the XZ plane, tilted slightly for visual interest. */
+function createRingMesh(scene: Scene, name: string, innerRadius: number, outerRadius: number, segments: number): Mesh {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    positions.push(cos * innerRadius, 0, sin * innerRadius, cos * outerRadius, 0, sin * outerRadius);
+    uvs.push(0, i / segments, 1, i / segments);
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2;
+    const b = i * 2 + 1;
+    const c = (i + 1) * 2;
+    const d = (i + 1) * 2 + 1;
+    indices.push(a, c, b, b, c, d);
+  }
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, indices, normals);
+
+  const mesh = new Mesh(name, scene);
+  const vertexData = new VertexData();
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+  vertexData.uvs = uvs;
+  vertexData.normals = normals;
+  vertexData.applyToMesh(mesh);
+
+  const material = new StandardMaterial(`${name}Material`, scene);
+  material.diffuseColor = new Color3(0.75, 0.68, 0.55);
+  material.specularColor = Color3.Black();
+  material.alpha = 0.55;
+  material.backFaceCulling = false;
+  material.useLogarithmicDepth = true;
+  mesh.material = material;
+  mesh.isPickable = false;
+  mesh.rotation.x = 0.35; // tilt so it doesn't read as a flat edge-on line from most angles
+  return mesh;
 }
 
 /**
@@ -73,6 +115,11 @@ export class CelestialBody {
       material.specularColor = Color3.Black();
       material.useLogarithmicDepth = true;
       this.mesh.material = material;
+
+      if (def.name === "Saturn") {
+        const ring = createRingMesh(scene, "SaturnRing", this.radius * 1.4, this.radius * 2.3, 96);
+        ring.parent = this.orbit.spinNode;
+      }
     }
   }
 

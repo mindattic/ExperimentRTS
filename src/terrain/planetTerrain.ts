@@ -3,8 +3,8 @@ import { CUBE_FACES } from "./cubeSphere";
 import { PlanetHeightfield } from "./heightfield";
 import { buildPatchMesh } from "./patchMesh";
 import { QuadNode } from "./quadNode";
+import { graphicsSettings } from "../settings/graphicsSettings";
 
-const PATCH_RESOLUTION = 33;
 const MAX_DEPTH = 9;
 const SPLIT_FACTOR = 2.0;
 const MERGE_FACTOR = 2.6;
@@ -23,11 +23,16 @@ export class PlanetTerrain {
   private readonly scene: Scene;
   private readonly planetRadius: number;
   private readonly parentNode: TransformNode | null;
+  private readonly patchResolution: number;
 
   constructor(scene: Scene, planetRadius: number, seed: number, parentNode: TransformNode | null = null) {
     this.scene = scene;
     this.planetRadius = planetRadius;
     this.parentNode = parentNode;
+    // Captured once at construction (not read live per-patch) so a body's terrain has a
+    // consistent resolution throughout its lifetime - the setting takes effect for newly
+    // created bodies (next visit or reload), not by retroactively re-meshing existing ones.
+    this.patchResolution = graphicsSettings.patchResolution;
     this.heightfield = new PlanetHeightfield(seed);
 
     this.material = new StandardMaterial("planetTerrainMaterial", scene);
@@ -73,7 +78,7 @@ export class PlanetTerrain {
       node.u0,
       node.v0,
       node.size,
-      PATCH_RESOLUTION,
+      this.patchResolution,
       this.planetRadius,
       this.heightfield,
     );
