@@ -2,8 +2,11 @@ import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@ba
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import { CelestialOrbit } from "../solarSystem/celestialOrbit";
 import { spinPeriodSeconds } from "../solarSystem/scale";
+import type { Dockable } from "./dockable";
 import type { StationDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
+
+const tmpParentPos = new Vector3();
 
 const materialCache = new Map<string, StandardMaterial>();
 
@@ -40,13 +43,15 @@ const STATION_SPIN_SECONDS = 90;
  * not a mandatory chokepoint - so no special approach-vector alignment is attempted here; the
  * torus just sits in its default orientation (hole facing local Y).
  */
-export class Station {
+export class Station implements Dockable {
+  readonly id: string;
   readonly def: StationDef;
   readonly orbit: CelestialOrbit;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
 
   constructor(scene: Scene, def: StationDef, parentBody: CelestialBody) {
+    this.id = def.id;
     this.def = def;
     this.parentBody = parentBody;
 
@@ -71,5 +76,15 @@ export class Station {
     this.mesh = MeshBuilder.CreateTorus(`${def.id}Mesh`, { diameter: outerRadius * 2, thickness: outerRadius * 0.28, tessellation: 24 }, scene);
     this.mesh.material = createStationMaterial(scene, def);
     this.mesh.parent = this.orbit.spinNode;
+  }
+
+  /** Composes the parent planet's future position with this station's own future position in
+   * the planet's orbit frame - valid because orbitNode only ever translates, never rotates, so
+   * this is a plain vector add, not a matrix transform. */
+  predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
+    this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, tmpParentPos);
+    this.orbit.predictLocalPositionAt(secondsFromNow, out);
+    out.addInPlace(tmpParentPos);
+    return out;
   }
 }

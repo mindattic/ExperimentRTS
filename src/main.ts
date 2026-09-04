@@ -140,7 +140,7 @@ async function main() {
 
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
-  new EconomyManager(scene, solarSystem);
+  const economyManager = new EconomyManager(scene, solarSystem);
 
   const settingsMenu = new SettingsMenu(
     () => {
@@ -480,6 +480,7 @@ async function main() {
     // whichever camera is active) even while flying - it uses screen-space projection, not
     // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
     selectionUI.update();
+    economyManager.update(dt);
 
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);
