@@ -42,7 +42,7 @@ export class RtsGroundCamera {
 
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
-  private readonly heightfield: PlanetHeightfield;
+  private heightfield: PlanetHeightfield;
   private wheelHandler = (e: WheelEvent) => this.onWheel(e);
   private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
@@ -114,6 +114,11 @@ export class RtsGroundCamera {
   /** Anchors the camera to the nearest point on the sphere to `worldPoint`. */
   setAnchorFromWorldPoint(worldPoint: Vector3): void {
     this.anchor.copyFrom(worldPoint).normalize();
+  }
+
+  /** Switches which body's heightfield ground mode samples - used when focus changes to a different landable body. */
+  setHeightfield(heightfield: PlanetHeightfield): void {
+    this.heightfield = heightfield;
   }
 
   private onPointerDown(e: PointerEvent): void {

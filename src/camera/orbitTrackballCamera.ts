@@ -26,8 +26,8 @@ export class OrbitTrackballCamera {
   readonly viewDir = new Vector3(0, 0.35, 1);
   readonly up = new Vector3(0, 1, 0);
   radius: number;
-  readonly minRadius: number;
-  readonly maxRadius: number;
+  minRadius: number;
+  maxRadius: number;
 
   private targetRadius: number | null = null;
   private dragging = false;
@@ -91,6 +91,12 @@ export class OrbitTrackballCamera {
   /** Smoothly animates the radius toward `target` over the next several frames. */
   flyToRadius(target: number): void {
     this.targetRadius = target;
+  }
+
+  /** Updates the zoom clamp range - used when focus switches to a body of a different size. */
+  setRadiusLimits(minRadius: number, maxRadius: number): void {
+    this.minRadius = minRadius;
+    this.maxRadius = maxRadius;
   }
 
   get isFlying(): boolean {

@@ -11,25 +11,31 @@ import { SelectionUI } from "./ui/selection";
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const reorientButton = document.getElementById("reorientButton") as HTMLButtonElement;
 
-const EARTH = BODY_DEFS.find((b) => b.name === "Earth")!;
-const PLANET_RADIUS = 2000 * EARTH.relativeRadius;
-
-/** Orbit radius below which we hand off to the fixed RTS ground camera. */
-const ENTER_GROUND_RADIUS = PLANET_RADIUS * 1.06;
-/**
- * Radius the orbit camera flies back out to when leaving ground mode. Kept comfortably above
- * ENTER_GROUND_RADIUS: the fly-back animates radius upward through that threshold, so without
- * this margin (and the `flyingToOrbit` guard below) the orbit-mode entry check would
- * immediately re-trigger ground mode mid-animation.
- */
-const EXIT_ORBIT_RADIUS = PLANET_RADIUS * 1.25;
-const MIN_ORBIT_RADIUS = PLANET_RADIUS * 1.02;
-/** Zoomed all the way out, the focused planet should still read clearly as a sphere, not a
- * speck - capped below the gap to the nearest neighboring planet so zooming out from Earth
- * doesn't wander into Venus or Mars's territory. */
-const MAX_ORBIT_RADIUS = PLANET_RADIUS * 10;
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
+/** Fraction of a body's max orbit radius the camera pulls back to during the transit's departure beat. */
+const TRANSIT_PULLBACK_FRACTION = 0.92;
+const DEFAULT_ARRIVAL_VIEW_DIR = new Vector3(0, 0.35, 1);
+
+interface RadiusThresholds {
+  enterGround: number;
+  exitOrbit: number;
+  minOrbit: number;
+  maxOrbit: number;
+  defaultOrbit: number;
+}
+
+function radiusThresholds(bodyRadius: number): RadiusThresholds {
+  return {
+    enterGround: bodyRadius * 1.06,
+    exitOrbit: bodyRadius * 1.25,
+    minOrbit: bodyRadius * 1.02,
+    // Capped below the gap to the nearest neighboring body so zooming out doesn't wander into
+    // another body's territory (see the scale.ts spacing notes).
+    maxOrbit: bodyRadius * 10,
+    defaultOrbit: bodyRadius * 3.5,
+  };
+}
 
 async function main() {
   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
@@ -47,9 +53,10 @@ async function main() {
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
   const solarSystem = new SolarSystem(scene);
-  const focused = solarSystem.focused;
+  let focused = solarSystem.focused;
+  let thresholds = radiusThresholds(focused.radius);
 
-  const orbitCamera = new OrbitTrackballCamera(scene, canvas, PLANET_RADIUS * 3.5, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS, FAR_CLIP);
+  const orbitCamera = new OrbitTrackballCamera(scene, canvas, thresholds.defaultOrbit, thresholds.minOrbit, thresholds.maxOrbit, FAR_CLIP);
   orbitCamera.camera.parent = focused.orbit.spinNode;
   scene.activeCamera = orbitCamera.camera;
   orbitCamera.attach();
@@ -60,9 +67,16 @@ async function main() {
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas);
 
   let mode: "orbit" | "ground" = "orbit";
+  /** Two-beat transit: pull back from the departure body, reparent+reset at peak pullback, fly in on the target. Simpler and far more robust than puppeteering true world-space flight through a continuously-moving target - see the Sol System Explorer plan's Phase 4 notes. */
+  let transitPhase: "pullback" | "arrive" | null = null;
   let escapePressed = false;
+  let tabPressed = false;
   window.addEventListener("keydown", (e) => {
     if (e.code === "Escape") escapePressed = true;
+    if (e.code === "Tab") {
+      e.preventDefault();
+      tabPressed = true;
+    }
   });
 
   reorientButton.addEventListener("click", () => {
@@ -86,8 +100,37 @@ async function main() {
     scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
-    orbitCamera.flyToRadius(EXIT_ORBIT_RADIUS);
+    orbitCamera.flyToRadius(thresholds.exitOrbit);
     reorientButton.hidden = false;
+  }
+
+  function beginTransit() {
+    if (mode !== "orbit" || transitPhase) return;
+    const targetIndex = selectionUI.targetIndex;
+    if (targetIndex === null || targetIndex === solarSystem.focusedIndex) return;
+    transitPhase = "pullback";
+    orbitCamera.flyToRadius(thresholds.maxOrbit * TRANSIT_PULLBACK_FRACTION);
+  }
+
+  function completePullback() {
+    const targetIndex = selectionUI.targetIndex!;
+    const target = solarSystem.bodies[targetIndex];
+    solarSystem.focusedIndex = targetIndex;
+    focused = target;
+    thresholds = radiusThresholds(target.radius);
+
+    orbitCamera.camera.parent = target.orbit.spinNode;
+    orbitCamera.setViewDirFromWorldPoint(DEFAULT_ARRIVAL_VIEW_DIR);
+    orbitCamera.radius = thresholds.maxOrbit * TRANSIT_PULLBACK_FRACTION;
+    orbitCamera.setRadiusLimits(thresholds.minOrbit, thresholds.maxOrbit);
+
+    if (target.landable && target.heightfield) {
+      groundCamera.setHeightfield(target.heightfield);
+      groundCamera.camera.parent = target.orbit.spinNode;
+    }
+
+    transitPhase = "arrive";
+    orbitCamera.flyToRadius(thresholds.defaultOrbit);
   }
 
   engine.runRenderLoop(() => {
@@ -96,18 +139,27 @@ async function main() {
     if (mode === "orbit") {
       orbitCamera.update(dt);
     } else {
-      groundCamera.update(dt, PLANET_RADIUS);
+      groundCamera.update(dt, focused.radius);
     }
 
     const focusedCameraLocalPosition = mode === "orbit" ? orbitCamera.camera.position : groundCamera.camera.position;
     solarSystem.update(dt, focusedCameraLocalPosition, sun);
 
-    if (mode === "orbit") {
-      if (!orbitCamera.isFlying && orbitCamera.radius < ENTER_GROUND_RADIUS) {
-        enterGroundMode();
-      }
-    } else {
-      if (groundCamera.requestExitToOrbit || escapePressed) {
+    if (transitPhase === "pullback" && !orbitCamera.isFlying) {
+      completePullback();
+    } else if (transitPhase === "arrive" && !orbitCamera.isFlying) {
+      transitPhase = null;
+    }
+
+    if (tabPressed) beginTransit();
+    tabPressed = false;
+
+    if (!transitPhase) {
+      if (mode === "orbit") {
+        if (focused.landable && !orbitCamera.isFlying && orbitCamera.radius < thresholds.enterGround) {
+          enterGroundMode();
+        }
+      } else if (groundCamera.requestExitToOrbit || escapePressed) {
         exitToOrbitMode();
       }
     }
