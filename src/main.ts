@@ -23,6 +23,7 @@ import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmap
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
+import { EconomyManager } from "./economy/economyManager";
 import { SettingsMenu } from "./ui/settingsMenu";
 import { keybindings } from "./input/keybindings";
 import { graphicsSettings } from "./settings/graphicsSettings";
@@ -139,6 +140,7 @@ async function main() {
 
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
+  new EconomyManager(scene, solarSystem);
 
   const settingsMenu = new SettingsMenu(
     () => {
