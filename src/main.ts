@@ -27,6 +27,7 @@ import { graphicsSettings } from "./settings/graphicsSettings";
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
 const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
+const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
@@ -39,6 +40,7 @@ interface RadiusThresholds {
   minOrbit: number;
   maxOrbit: number;
   defaultOrbit: number;
+  catchRadius: number;
 }
 
 function radiusThresholds(bodyRadius: number): RadiusThresholds {
@@ -50,6 +52,12 @@ function radiusThresholds(bodyRadius: number): RadiusThresholds {
     // another body's territory (see the scale.ts spacing notes).
     maxOrbit: bodyRadius * 10,
     defaultOrbit: bodyRadius * 3.5,
+    // Free cam "catch" distance (see updateFreeCamCatch in main()) - deliberately smaller than
+    // maxOrbit, which serves a different purpose (the orbit camera's own zoom-out clamp). At
+    // 10x, a gas giant's already-large radius (Jupiter alone is 4x Earth's) balloons into a
+    // catch zone that can swallow a third of the way to its neighbors, making the "flown clear
+    // of everything" re-arm condition nearly unreachable from well within the system.
+    catchRadius: bodyRadius * 5,
   };
 }
 
@@ -86,8 +94,6 @@ async function main() {
 
   const freeFlyCamera = new FreeFlyCamera(scene, canvas, FAR_CLIP);
 
-  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas);
-
   let mode: "orbit" | "ground" = "orbit";
   let freeCamActive = false;
   let escapePressed = false;
@@ -95,6 +101,8 @@ async function main() {
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
+
+  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
 
   const settingsMenu = new SettingsMenu(
     () => {
@@ -155,11 +163,18 @@ async function main() {
       freeFlyCamera.attach();
       freeCamActive = true;
       freeCamBadge.hidden = false;
+      freeCamReticle.hidden = false;
       planeLockBadge.hidden = true;
+      // If free cam starts out already within some body's catch radius (the common case -
+      // free cam is usually toggled on while already close to whatever you were just orbiting),
+      // don't immediately catch it right back - require flying clear of every body's catch
+      // radius at least once first. See updateFreeCamCatch().
+      freeCamCatchArmed = !isWithinAnyBodyCatchRadius(worldPos);
     } else {
       freeFlyCamera.detach();
       freeCamActive = false;
       freeCamBadge.hidden = true;
+      freeCamReticle.hidden = true;
 
       orbitCamera.camera.parent = focused.orbit.spinNode;
       orbitCamera.resetView(new Vector3(0, 0.35, 1));
@@ -168,6 +183,88 @@ async function main() {
       orbitCamera.attach();
       mode = "orbit";
       planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
+    }
+  }
+
+  // --- Free cam "catch": flying close enough to any body while in free cam automatically
+  // hands control to the orbit camera, framed on that body - the camera can never fly straight
+  // through a planet, it always gets caught into orbit first (which itself naturally narrows
+  // into RTS ground view on a landable body as you keep pulling in closer, and back out to
+  // orbit view as you pull away - see the enterGroundMode/exitToOrbitMode threshold checks
+  // below). Armed/disarmed by updateFreeCamCatch() rather than a plain radius check, so
+  // toggling free cam on while already close to a body doesn't instantly re-catch you.
+  let freeCamCatchArmed = false;
+  const tmpCatchDir = new Vector3();
+
+  function isWithinAnyBodyCatchRadius(worldPos: Vector3): boolean {
+    for (const body of solarSystem.bodies) {
+      const bodyPos = body.orbit.spinNode.getAbsolutePosition();
+      if (Vector3.Distance(worldPos, bodyPos) < radiusThresholds(body.radius).catchRadius) return true;
+    }
+    return false;
+  }
+
+  function updateFreeCamCatch(): void {
+    const camPos = freeFlyCamera.camera.globalPosition;
+    if (!freeCamCatchArmed) {
+      if (!isWithinAnyBodyCatchRadius(camPos)) freeCamCatchArmed = true;
+      return;
+    }
+    for (const body of solarSystem.bodies) {
+      const bodyPos = body.orbit.spinNode.getAbsolutePosition();
+      const dist = Vector3.Distance(camPos, bodyPos);
+      const targetThresholds = radiusThresholds(body.radius);
+      if (dist < targetThresholds.catchRadius) {
+        catchFreeCamIntoOrbit(body, targetThresholds, camPos, bodyPos, dist);
+        return;
+      }
+    }
+  }
+
+  function catchFreeCamIntoOrbit(
+    target: (typeof solarSystem.bodies)[number],
+    targetThresholds: RadiusThresholds,
+    camPos: Vector3,
+    bodyPos: Vector3,
+    dist: number,
+  ): void {
+    // Same world-direction-to-local-viewDir conversion as completeTransit() below - spinNode's
+    // world rotation equals its own local rotationQuaternion (its parent orbitNode never
+    // rotates, only translates), so its inverse converts world directions into the frame
+    // OrbitTrackballCamera's local viewDir/up are expressed in.
+    tmpCatchDir.copyFrom(camPos).subtractInPlace(bodyPos).normalize();
+    const spinWorldRot = target.orbit.spinNode.rotationQuaternion!.clone().conjugateInPlace();
+    Matrix.FromQuaternionToRef(spinWorldRot, tmpInvMatrix);
+    Vector3.TransformCoordinatesToRef(tmpCatchDir, tmpInvMatrix, tmpLocalViewDir);
+    tmpLocalViewDir.normalize();
+
+    solarSystem.focusedIndex = solarSystem.bodies.indexOf(target);
+    focused = target;
+    thresholds = targetThresholds;
+
+    freeFlyCamera.detach();
+    freeCamActive = false;
+    freeCamBadge.hidden = true;
+    freeCamReticle.hidden = true;
+
+    orbitCamera.camera.parent = target.orbit.spinNode;
+    orbitCamera.resetView(tmpLocalViewDir);
+    orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, dist)));
+    orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
+    // Forces camera.position/rotationQuaternion to be computed immediately from the fields just
+    // set above, rather than staying at their stale pre-free-cam values for one visible frame
+    // until the next regular orbitCamera.update() call (which won't happen until next tick,
+    // since this frame already took the freeCamActive branch for camera movement).
+    orbitCamera.update(0);
+
+    scene.activeCamera = orbitCamera.camera;
+    orbitCamera.attach();
+    mode = "orbit";
+    planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
+
+    if (target.landable && target.heightfield) {
+      groundCamera.setHeightfield(target.heightfield);
+      groundCamera.camera.parent = target.orbit.spinNode;
     }
   }
 
@@ -270,6 +367,7 @@ async function main() {
 
     if (freeCamActive) {
       freeFlyCamera.update(dt);
+      updateFreeCamCatch(); // may flip freeCamActive/mode to orbit right here, mid-frame
     } else if (transiting) {
       updateTransit(dt);
     } else if (mode === "orbit") {
@@ -324,7 +422,11 @@ async function main() {
     }
     escapePressed = false;
 
-    if (!freeCamActive) selectionUI.update();
+    // Runs regardless of mode, including free cam, so the corner-bracket target-lock reticle
+    // keeps tracking a selected body's screen position (via scene.activeCamera, which is
+    // whichever camera is active) even while flying - it uses screen-space projection, not
+    // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
+    selectionUI.update();
 
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);

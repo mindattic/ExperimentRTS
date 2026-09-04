@@ -1,5 +1,8 @@
 import { AbstractEngine, Matrix, type Node, Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
+import type { FreeFlyCamera } from "../camera/freeFlyCamera";
+
+const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body's orbit
 
 const CLICK_MOVE_THRESHOLD_PX = 6;
 const MIN_RETICLE_SIZE = 24;
@@ -22,6 +25,8 @@ export class SelectionUI {
   private readonly solarSystem: SolarSystem;
   private readonly scene: Scene;
   private readonly engine: AbstractEngine;
+  private readonly freeFlyCamera: FreeFlyCamera;
+  private readonly isFreeCamActive: () => boolean;
   private readonly focusListEl: HTMLElement;
   private readonly focusListItemsEl: HTMLOListElement;
   private readonly reticleEl: HTMLElement;
@@ -30,10 +35,19 @@ export class SelectionUI {
   private pointerDownX = 0;
   private pointerDownY = 0;
 
-  constructor(solarSystem: SolarSystem, scene: Scene, engine: AbstractEngine, canvas: HTMLCanvasElement) {
+  constructor(
+    solarSystem: SolarSystem,
+    scene: Scene,
+    engine: AbstractEngine,
+    canvas: HTMLCanvasElement,
+    freeFlyCamera: FreeFlyCamera,
+    isFreeCamActive: () => boolean,
+  ) {
     this.solarSystem = solarSystem;
     this.scene = scene;
     this.engine = engine;
+    this.freeFlyCamera = freeFlyCamera;
+    this.isFreeCamActive = isFreeCamActive;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
@@ -90,6 +104,19 @@ export class SelectionUI {
 
   private onPointerUp(e: PointerEvent): void {
     if (e.button !== 0) return; // right-click drives ground-camera free-look, not selection
+
+    if (this.isFreeCamActive()) {
+      // Pointer Lock hides the cursor and freezes clientX/clientY at wherever the lock engaged,
+      // so a screen-coordinate pick is meaningless here - raycast straight down the crosshair
+      // (camera forward) instead, same idea as an FPS reticle.
+      const ray = this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE);
+      const pick = this.scene.pickWithRay(ray);
+      if (!pick?.hit || !pick.pickedMesh) return;
+      const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
+      if (index !== null) this.setTarget(index);
+      return;
+    }
+
     const dx = e.clientX - this.pointerDownX;
     const dy = e.clientY - this.pointerDownY;
     if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD_PX) return; // was a drag, not a click
