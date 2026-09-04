@@ -5,6 +5,7 @@ import { spinPeriodSeconds } from "../solarSystem/scale";
 import type { Dockable } from "./dockable";
 import type { StationDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
+import type { ExaminableInfo } from "../ui/examineUI";
 
 const tmpParentPos = new Vector3();
 
@@ -86,5 +87,16 @@ export class Station implements Dockable {
     this.orbit.predictLocalPositionAt(secondsFromNow, out);
     out.addInPlace(tmpParentPos);
     return out;
+  }
+
+  toExamineInfo(): ExaminableInfo {
+    return {
+      worldPosition: this.mesh.getAbsolutePosition(),
+      name: this.def.name,
+      faction: FACTION_PALETTES[this.def.faction].label,
+      kind: "Station",
+      crew: this.def.crew,
+      cargo: this.def.cargo,
+    };
   }
 }

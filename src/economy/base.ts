@@ -2,8 +2,10 @@ import { Mesh, MeshBuilder, Scene, Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import type { Dockable } from "./dockable";
 import type { BaseDef } from "./economyDefs";
+import { FACTION_PALETTES } from "./factions";
 import { createHullMaterial, hashSeed, HULL_FACE_UV } from "./hullTexture";
 import { mulberry32 } from "../terrain/prng";
+import type { ExaminableInfo } from "../ui/examineUI";
 
 /**
  * A fixed textured-cuboid placeholder sitting on a landable body's surface - not an orbit at
@@ -48,5 +50,16 @@ export class Base implements Dockable {
     this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, out);
     out.addInPlace(this.approachDirectionInOrbitFrame.scale(this.parentBody.radius * 1.5));
     return out;
+  }
+
+  toExamineInfo(): ExaminableInfo {
+    return {
+      worldPosition: this.mesh.getAbsolutePosition(),
+      name: this.def.name,
+      faction: FACTION_PALETTES[this.def.faction].label,
+      kind: "Base",
+      crew: this.def.crew,
+      cargo: this.def.cargo,
+    };
   }
 }

@@ -1,9 +1,11 @@
 import { Mesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3 } from "@babylonjs/core";
 import type { Dockable } from "./dockable";
 import type { ShipDef } from "./economyDefs";
+import { FACTION_PALETTES } from "./factions";
 import { createHullMaterial, createShipIconMaterial, hashSeed, HULL_FACE_UV } from "./hullTexture";
 import { buildFlightProfile, computeFlightRotations, evaluateFlightProfile, evaluateFlightRotation, solveRendezvous, type FlightProfile } from "./shipTransit";
 import { EARTH_RADIUS } from "../solarSystem/scale";
+import type { ExaminableInfo } from "../ui/examineUI";
 
 type ShipPhase = "docked" | "transit";
 
@@ -81,6 +83,22 @@ export class Ship {
       if (this.dwellRemaining <= 0) this.departNext(resolveStop);
     }
     this.updateLod(cameraWorldPosition);
+  }
+
+  toExamineInfo(): ExaminableInfo {
+    const info: ExaminableInfo = {
+      worldPosition: this.root.position,
+      name: this.def.name,
+      faction: FACTION_PALETTES[this.def.faction].label,
+      kind: "Ship",
+      crew: this.def.crew,
+      cargo: this.def.cargo,
+    };
+    if (this.phase === "transit") {
+      info.speedUnitsPerSec = this.currentSpeed;
+      info.etaSeconds = this.etaSeconds;
+    }
+    return info;
   }
 
   private updateLod(cameraWorldPosition: Vector3): void {

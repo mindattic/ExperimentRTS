@@ -284,6 +284,45 @@ body {
   display: none;
 }
 
+.examine-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+
+.examine-placard {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -100%);
+  padding: 4px 8px;
+  font-family: system-ui, sans-serif;
+  white-space: nowrap;
+  background: rgba(15, 15, 20, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.examine-placard[hidden] {
+  display: none;
+}
+
+.examine-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f2f2f2;
+}
+
+.examine-stats {
+  font-size: 10.5px;
+  color: #b8bec9;
+}
+
 .focus-list {
   position: fixed;
   top: 16px;

@@ -24,6 +24,7 @@ import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
 import { EconomyManager } from "./economy/economyManager";
+import { ExamineUI } from "./ui/examineUI";
 import { SettingsMenu } from "./ui/settingsMenu";
 import { keybindings } from "./input/keybindings";
 import { graphicsSettings } from "./settings/graphicsSettings";
@@ -141,6 +142,7 @@ async function main() {
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
+  const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo());
 
   const settingsMenu = new SettingsMenu(
     () => {
@@ -481,6 +483,7 @@ async function main() {
     // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
     selectionUI.update();
     economyManager.update(dt, scene.activeCamera!.globalPosition);
+    examineUI.update();
 
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);
