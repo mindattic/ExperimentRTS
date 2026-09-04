@@ -100,13 +100,21 @@ export class PlanetTerrain {
     if (node.children) {
       const allReady = node.children.every((c) => c.mesh !== null);
       if (allReady) {
-        node.mesh.setEnabled(false);
-        for (const child of node.children) {
-          child.mesh!.setEnabled(true);
-          this.visit(child, cameraPosition);
-        }
         if (distance > node.boundingRadius * MERGE_FACTOR) {
+          // Merging back to the parent patch. Re-enable the parent BEFORE disposing the
+          // children (rather than after, alongside them) - otherwise, for the one frame the
+          // merge triggers on, the parent is already disabled from a prior frame and the
+          // children get disposed before scene.render() ever runs, leaving this patch's
+          // footprint with zero enabled meshes: a one-frame gap that reads as a missing
+          // square/flicker during camera movement (reproduced headlessly - see git history).
+          node.mesh.setEnabled(true);
           this.disposeChildren(node);
+        } else {
+          node.mesh.setEnabled(false);
+          for (const child of node.children) {
+            child.mesh!.setEnabled(true);
+            this.visit(child, cameraPosition);
+          }
         }
       } else {
         node.mesh.setEnabled(true);
