@@ -7,16 +7,21 @@
  */
 
 /** Scene units per compressed "AU" at Earth's distance (au=1 -> this many units from the star). */
-export const EARTH_DISTANCE = 6000;
+export const EARTH_DISTANCE = 20000;
 /** Scene-unit radius for an Earth-like body (matches the original single-planet PLANET_RADIUS). */
 export const EARTH_RADIUS = 2000;
 /** Scene-unit radius of the star itself - sized to look like a modest sun from Mercury's
  * orbit, not a wall filling the screen, at this compressed distance scale. */
 export const STAR_RADIUS = 350;
 
-/** Compresses a real AU distance into scene units. Exponent < 1 keeps far bodies reachable. */
+/**
+ * Compresses a real AU distance into scene units. Exponent < 1 keeps far bodies reachable.
+ * 0.5 (not the gentler 0.45 first tried) - at 0.45 with EARTH_DISTANCE=6000 the gap between
+ * neighboring inner planets (~1000 units) ended up smaller than the planets' own radii
+ * (~1000-2000), so Venus/Earth/Mars visually overlapped from a normal orbit-camera distance.
+ */
 export function sceneDistance(au: number): number {
-  return EARTH_DISTANCE * Math.pow(au, 0.45);
+  return EARTH_DISTANCE * Math.pow(au, 0.5);
 }
 
 /** Compresses a real orbital period (Earth years) into scene seconds. Outer bodies still orbit slower than inner ones, just not by 100x+. */

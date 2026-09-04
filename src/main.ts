@@ -2,18 +2,16 @@ import "./style.css";
 
 import { EngineFactory, type AbstractEngine, Scene, Vector3, Color3, Color4, HemisphericLight, DirectionalLight } from "@babylonjs/core";
 
-import { PlanetTerrain } from "./terrain/planetTerrain";
 import { RtsGroundCamera } from "./camera/rtsGroundCamera";
 import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
-import { Star } from "./environment/star";
-import { CelestialOrbit } from "./solarSystem/celestialOrbit";
-import { BODY_DEFS, bodyRadius, sceneDistance, orbitPeriodSeconds, STAR_RADIUS } from "./solarSystem/scale";
+import { SolarSystem } from "./solarSystem/solarSystem";
+import { BODY_DEFS, sceneDistance } from "./solarSystem/scale";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const reorientButton = document.getElementById("reorientButton") as HTMLButtonElement;
 
 const EARTH = BODY_DEFS.find((b) => b.name === "Earth")!;
-const PLANET_RADIUS = bodyRadius(EARTH);
+const PLANET_RADIUS = 2000 * EARTH.relativeRadius;
 
 /** Orbit radius below which we hand off to the fixed RTS ground camera. */
 const ENTER_GROUND_RADIUS = PLANET_RADIUS * 1.06;
@@ -25,12 +23,12 @@ const ENTER_GROUND_RADIUS = PLANET_RADIUS * 1.06;
  */
 const EXIT_ORBIT_RADIUS = PLANET_RADIUS * 1.25;
 const MIN_ORBIT_RADIUS = PLANET_RADIUS * 1.02;
-/** Zoomed all the way out, the planet should still read clearly as a sphere, not a speck. */
-const MAX_ORBIT_RADIUS = PLANET_RADIUS * 15;
-/** Comfortably past the star's orbit distance so it's never clipped. */
-const FAR_CLIP = sceneDistance(EARTH.auDistance) * 3;
-
-const tmpSunDirection = new Vector3();
+/** Zoomed all the way out, the focused planet should still read clearly as a sphere, not a
+ * speck - capped below the gap to the nearest neighboring planet so zooming out from Earth
+ * doesn't wander into Venus or Mars's territory. */
+const MAX_ORBIT_RADIUS = PLANET_RADIUS * 10;
+/** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
+const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
 
 async function main() {
   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
@@ -47,29 +45,16 @@ async function main() {
   // side is always at least dimly visible.
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
-  new Star(scene, STAR_RADIUS);
-
-  const orbit = new CelestialOrbit(scene, {
-    name: "earth",
-    semiMajorAxis: sceneDistance(EARTH.auDistance),
-    eccentricity: EARTH.eccentricity,
-    orbitPeriodSeconds: orbitPeriodSeconds(EARTH.orbitYears),
-    orbitAxis: new Vector3(0.12, 0.98, 0.15).normalize(),
-    spinPeriodSeconds: EARTH.spinPeriodSeconds,
-    spinAxis: new Vector3(0.15, 0.97, -0.18).normalize(),
-    startAngle: 0,
-  });
-  orbit.createOrbitLine(scene, "earthOrbitLine");
-
-  const terrain = new PlanetTerrain(scene, PLANET_RADIUS, EARTH.seed, orbit.spinNode);
+  const solarSystem = new SolarSystem(scene);
+  const focused = solarSystem.focused;
 
   const orbitCamera = new OrbitTrackballCamera(scene, canvas, PLANET_RADIUS * 3.5, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS, FAR_CLIP);
-  orbitCamera.camera.parent = orbit.spinNode;
+  orbitCamera.camera.parent = focused.orbit.spinNode;
   scene.activeCamera = orbitCamera.camera;
   orbitCamera.attach();
 
-  const groundCamera = new RtsGroundCamera(scene, canvas, terrain.heightfield);
-  groundCamera.camera.parent = orbit.spinNode;
+  const groundCamera = new RtsGroundCamera(scene, canvas, focused.heightfield!);
+  groundCamera.camera.parent = focused.orbit.spinNode;
 
   let mode: "orbit" | "ground" = "orbit";
   let escapePressed = false;
@@ -105,19 +90,20 @@ async function main() {
   engine.runRenderLoop(() => {
     const dt = engine.getDeltaTime() / 1000;
 
-    orbit.update(dt);
-    orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
-    sun.direction.copyFrom(tmpSunDirection);
-
     if (mode === "orbit") {
       orbitCamera.update(dt);
-      terrain.update(orbitCamera.camera.position);
+    } else {
+      groundCamera.update(dt, PLANET_RADIUS);
+    }
+
+    const focusedCameraLocalPosition = mode === "orbit" ? orbitCamera.camera.position : groundCamera.camera.position;
+    solarSystem.update(dt, focusedCameraLocalPosition, sun);
+
+    if (mode === "orbit") {
       if (!orbitCamera.isFlying && orbitCamera.radius < ENTER_GROUND_RADIUS) {
         enterGroundMode();
       }
     } else {
-      groundCamera.update(dt, PLANET_RADIUS);
-      terrain.update(groundCamera.camera.position);
       if (groundCamera.requestExitToOrbit || escapePressed) {
         exitToOrbitMode();
       }
