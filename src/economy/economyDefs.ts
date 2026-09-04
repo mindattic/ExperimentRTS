@@ -1,4 +1,4 @@
-import { BODY_DEFS } from "../solarSystem/scale";
+import { BODY_DEFS, bodyRadius, maxSafePersonalSpaceRadius } from "../solarSystem/scale";
 import type { FactionId } from "./factions";
 
 export interface BaseDef {
@@ -75,6 +75,20 @@ export const STATION_DEFS: readonly StationDef[] = [
   { id: "venusRelay", name: "Venus Relay", faction: "solFederation", crew: 40, cargo: "Sulfur compounds", orbitsAround: "Venus", orbitRadiusInParentRadii: 1.3 },
   { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 1.3 },
 ];
+
+// Same self-check scale.ts runs for moons, applied here for stations - see
+// maxSafePersonalSpaceRadius's own doc comment for why this needs to be an enforced check
+// rather than a hand-picked constant trusted to still be safe.
+for (const def of STATION_DEFS) {
+  const parent = BODY_DEFS.find((d) => d.name === def.orbitsAround)!;
+  const radius = bodyRadius(parent) * def.orbitRadiusInParentRadii;
+  const safeMax = maxSafePersonalSpaceRadius(parent.name);
+  if (radius > safeMax) {
+    throw new Error(
+      `${def.name}'s orbit radius (${radius.toFixed(0)}) exceeds ${parent.name}'s safe personal-space radius (${safeMax.toFixed(0)}) - it would reach into a neighboring body's territory. Lower orbitRadiusInParentRadii.`,
+    );
+  }
+}
 
 export const SHIP_DEFS: readonly ShipDef[] = [
   { id: "freighter1", name: "MV Perihelion", faction: "solFederation", crew: 8, cargo: "Machine parts (40t)", cruiseSpeed: 900, route: ["Earth", "earthYard"], dwellSeconds: 20 },

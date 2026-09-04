@@ -20,9 +20,16 @@ export const STAR_RADIUS = 350;
  * [periapsis, apoapsis] plus both bodies' own radii - ever overlap, i.e. planets can never
  * physically collide even at worst-case orbital phase. Verified numerically (every adjacent
  * pair keeps a >500 unit margin) rather than derived analytically - see the plan notes.
+ *
+ * Raised from 0.65 to 0.72 ("orbits need to be wider apart") - a single global exponent can't
+ * fully equalize every pair's spacing (Venus/Earth are irreducibly the tightest, both close in
+ * AU and both large bodies - even removing all compression, exponent 1.0, only takes their
+ * gap-to-body-size ratio from 1.4x to ~2x, while ballooning Eris from ~435,000 to 1,904,000
+ * units), so this is a modest, cheap widening everywhere - the real overlap fix is
+ * maxSafePersonalSpaceRadius below, which every moon/station orbit is actually checked against.
  */
 export function sceneDistance(au: number): number {
-  return EARTH_DISTANCE * Math.pow(au, 0.65);
+  return EARTH_DISTANCE * Math.pow(au, 0.72);
 }
 
 /** Single knob for "slow everything down further" requests - multiplies every period (both
@@ -104,15 +111,18 @@ export const BODY_DEFS: readonly BodyDef[] = [
   { name: "Mercury", kind: "rocky", auDistance: 0.39, orbitYears: 0.24, eccentricity: 0.02, relativeRadius: 0.45, realDiameterRatio: 0.38, spinPeriodSeconds: 150, seed: 101, atmosphereLevel: 0 },
   { name: "Venus", kind: "rocky", auDistance: 0.72, orbitYears: 0.62, eccentricity: 0.01, relativeRadius: 0.9, realDiameterRatio: 0.95, spinPeriodSeconds: 260, seed: 102, atmosphereLevel: 0.15, retrograde: true },
   { name: "Earth", kind: "rocky", auDistance: 1.0, orbitYears: 1.0, eccentricity: 0.02, relativeRadius: 1.0, realDiameterRatio: 1.0, spinPeriodSeconds: 200, seed: 1337, atmosphereLevel: 0.4 },
-  // moonOrbitRadiusInParentRadii is 2 here, not the real ~9-60x - this scene's interplanetary
-  // distances are compressed through sceneDistance()'s power curve while EARTH_RADIUS itself
-  // is NOT compressed by that same factor (planets are drawn much bigger relative to their
-  // orbital spacing than reality, a deliberate "fun over accuracy" choice - see sceneDistance's
-  // doc comment). At the real-ish value of 9, the Moon's orbit around Earth (radius 9*2000=18000
-  // units) came out bigger than Mercury's entire orbit around the sun (radius ~15184 units) -
-  // obviously wrong once both are drawn as orbit lines in the same scene. 2x (4000 units) keeps
-  // the Moon's near/far points comfortably inside the Earth-Venus/Earth-Mars gaps instead.
-  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 2, moonOrbitPeriodSeconds: 900 },
+  // moonOrbitRadiusInParentRadii is 1.5 here, not the real ~9-60x - this scene's interplanetary
+  // distances are compressed through sceneDistance()'s power curve while EARTH_RADIUS itself is
+  // NOT compressed by that same factor (planets are drawn much bigger relative to their orbital
+  // spacing than reality, a deliberate "fun over accuracy" choice - see sceneDistance's doc
+  // comment). At the real-ish value of 9, the Moon's orbit around Earth came out bigger than
+  // Mercury's entire orbit around the sun; at a "fixed" 2, it still exceeded
+  // maxSafePersonalSpaceRadius("Earth") by ~400 units once actually computed (Earth/Venus are
+  // this system's tightest neighboring pair). 1.5x keeps it comfortably inside (~48% of Earth's
+  // available clearance, not the full margin) - see maxSafePersonalSpaceRadius and the
+  // self-check loop below, which now catches this class of mistake at load time instead of
+  // needing it to be visually spotted.
+  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 1.5, moonOrbitPeriodSeconds: 900 },
   { name: "Mars", kind: "rocky", auDistance: 1.52, orbitYears: 1.88, eccentricity: 0.02, relativeRadius: 0.55, realDiameterRatio: 0.53, spinPeriodSeconds: 210, seed: 103, atmosphereLevel: 0.05 },
   { name: "Jupiter", kind: "gasGiant", auDistance: 5.2, orbitYears: 11.9, eccentricity: 0.02, relativeRadius: 4.0, realDiameterRatio: 11.2, spinPeriodSeconds: 90, seed: 104, atmosphereLevel: 0 },
   { name: "Saturn", kind: "gasGiant", auDistance: 9.5, orbitYears: 29.4, eccentricity: 0.02, relativeRadius: 3.5, realDiameterRatio: 9.45, spinPeriodSeconds: 95, seed: 105, atmosphereLevel: 0 },
@@ -124,6 +134,51 @@ export const BODY_DEFS: readonly BodyDef[] = [
 
 export function bodyRadius(def: BodyDef): number {
   return EARTH_RADIUS * def.relativeRadius;
+}
+
+/** How much of a body's actual clear space to a neighboring body a moon/station orbit is
+ * allowed to use - leaves comfortable headroom rather than running right up to the edge. */
+const PERSONAL_SPACE_SAFETY_FRACTION = 0.7;
+
+/** The largest safe orbit radius (scene units, measured from `bodyName`'s own center) a moon or
+ * station orbiting it can use without reaching into a neighboring star-orbiting body's own
+ * territory - computed from the real nearest-neighbor gap among BODY_DEFS, not a hand-picked
+ * constant that can silently go stale if BODY_DEFS ever changes (as happened twice this
+ * session: the Moon's orbit once drawn bigger than Mercury's entire orbit, then a station drawn
+ * farther out than the Moon). Used both by this file's own self-check below and by
+ * economyDefs.ts's equivalent check for stations. */
+export function maxSafePersonalSpaceRadius(bodyName: string): number {
+  const starOrbiting = BODY_DEFS.filter((d) => !d.orbitsAround);
+  const index = starOrbiting.findIndex((d) => d.name === bodyName);
+  const body = starOrbiting[index];
+  const bodyDist = sceneDistance(body.auDistance);
+  const bodyR = bodyRadius(body);
+  let minClearance = Infinity;
+  if (index > 0) {
+    const prev = starOrbiting[index - 1];
+    minClearance = Math.min(minClearance, bodyDist - sceneDistance(prev.auDistance) - bodyR - bodyRadius(prev));
+  }
+  if (index < starOrbiting.length - 1) {
+    const next = starOrbiting[index + 1];
+    minClearance = Math.min(minClearance, sceneDistance(next.auDistance) - bodyDist - bodyR - bodyRadius(next));
+  }
+  return bodyR + minClearance * PERSONAL_SPACE_SAFETY_FRACTION;
+}
+
+// Fails loudly at load time (not silently at runtime) if any moon's orbit would reach into a
+// neighboring body's territory - matching this codebase's existing pattern of throwing on
+// internal misconfiguration (e.g. EconomyManager.findBody/resolveStop) rather than letting a
+// spacing mistake ship and wait to be visually noticed, as happened twice already this session.
+for (const def of BODY_DEFS) {
+  if (!def.orbitsAround) continue;
+  const parent = BODY_DEFS.find((d) => d.name === def.orbitsAround)!;
+  const radius = bodyRadius(parent) * (def.moonOrbitRadiusInParentRadii ?? 6);
+  const safeMax = maxSafePersonalSpaceRadius(parent.name);
+  if (radius > safeMax) {
+    throw new Error(
+      `${def.name}'s orbit radius (${radius.toFixed(0)}) exceeds ${parent.name}'s safe personal-space radius (${safeMax.toFixed(0)}) - it would reach into a neighboring body's territory. Lower moonOrbitRadiusInParentRadii.`,
+    );
+  }
 }
 
 export interface HeightmapSource {
