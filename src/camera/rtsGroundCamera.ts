@@ -14,6 +14,20 @@ const ENTRY_BLEND_SECONDS = 0.35;
 /** Ground-plane units of pan per pixel of drag, per unit of eyeHeight (so drag feels
  * proportionally "grabbier" when zoomed further out, like dragging a map). */
 const DRAG_PAN_SENSITIVITY = 0.012;
+/** Radians per pixel of right-drag for free-look. */
+const LOOK_SENSITIVITY = 0.0055;
+/** How far up/down free-look can tilt away from the base framing pitch, radians (~80 degrees) -
+ * generous enough to spot a target on another planet or moon high in the sky, short of a full
+ * flip past the pole. */
+const MAX_LOOK_PITCH = 1.4;
+/** Exponential decay rate applied to free-look angular velocity after releasing the drag - same
+ * idea as OrbitTrackballCamera's inertia, so free-look eases to a stop instead of snapping,
+ * matching the "organic" feel of every other camera motion in the app. Higher than the orbit
+ * camera's own decay (4.5) - free-look is for aiming at a specific target, so it settles
+ * quickly rather than sailing well past wherever the drag let go. */
+const LOOK_INERTIA_DECAY_PER_SEC = 10.0;
+const MIN_LOOK_SETTLE_VELOCITY = 0.05;
+const MAX_LOOK_ANGULAR_VELOCITY = 12.0; // rad/sec
 
 const tmpMatrix = new Matrix();
 const tmpQuat = new Quaternion();
@@ -30,6 +44,7 @@ const tmpRotatedEast = new Vector3();
 const tmpRotatedNorth = new Vector3();
 const tmpHoverPoint = new Vector3();
 const tmpHoverDir = new Vector3();
+const tmpLookOffsetQuat = new Quaternion();
 /** Minimum clearance kept above the higher of (anchor elevation, hover-point elevation), so the camera never scrapes nearby terrain even when it's steeper than right under the anchor. */
 const MIN_CLEARANCE = 35;
 
@@ -43,7 +58,10 @@ function easeOutCubic(t: number): number {
  * the arrow keys by rotating that anchor around the sphere (never re-projected onto a flat
  * plane, so it can walk seamlessly across cube-face seams and all the way around the
  * planet). Mouse wheel zooms; zooming out past the max eye height signals the caller to
- * hand control back to the orbit camera.
+ * hand control back to the orbit camera. Right-drag free-looks in place (independent of the
+ * fixed framing pitch/panning direction) so the player can tilt up to spot and target a
+ * distant body - e.g. selecting a rocket launcher, then looking up to pick a target on
+ * another planet or moon - without moving off the anchor point.
  */
 export class RtsGroundCamera {
   readonly camera: UniversalCamera;
@@ -53,6 +71,13 @@ export class RtsGroundCamera {
    * with the groundRotateLeft/Right keys (Q/E by default) - rotates both the view and the
    * pan directions together. */
   private heading = 0;
+  /** Free-look yaw/pitch, right-drag - layered on top of the fixed framing look direction
+   * without affecting it, so WASD/arrow panning always stays relative to the same ground
+   * frame regardless of which way the player is currently looking. */
+  private lookYaw = 0;
+  private lookPitch = 0;
+  private velLookYaw = 0;
+  private velLookPitch = 0;
 
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
@@ -62,14 +87,18 @@ export class RtsGroundCamera {
   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
   private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
   private pointerMoveHandler = (e: PointerEvent) => this.onPointerMove(e);
-  private pointerUpHandler = () => {
-    this.dragging = false;
-  };
+  private pointerUpHandler = (e: PointerEvent) => this.onPointerUp(e);
+  private contextMenuHandler = (e: MouseEvent) => e.preventDefault();
   private dragging = false;
   private lastPointerX = 0;
   private lastPointerY = 0;
   private pendingPanEast = 0;
   private pendingPanNorth = 0;
+  /** True while right-drag free-look is active. */
+  private looking = false;
+  private lastLookX = 0;
+  private lastLookY = 0;
+  private lastLookMoveTime = 0;
   /** Set to true for one frame when the player zooms out past the max eye height. */
   requestExitToOrbit = false;
 
@@ -98,6 +127,12 @@ export class RtsGroundCamera {
   attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion): void {
     this.requestExitToOrbit = false;
     this.eyeHeight = MAX_EYE_HEIGHT;
+    // Free-look doesn't carry over between ground-mode sessions - re-entering always starts
+    // from the neutral base framing, not wherever a previous visit happened to leave it tilted.
+    this.lookYaw = 0;
+    this.lookPitch = 0;
+    this.velLookYaw = 0;
+    this.velLookPitch = 0;
     if (fromWorldPosition && fromRotation) {
       this.blendStartPos = fromWorldPosition.clone();
       this.blendStartRot = fromRotation.clone();
@@ -112,17 +147,20 @@ export class RtsGroundCamera {
     this.canvas.addEventListener("pointerdown", this.pointerDownHandler);
     window.addEventListener("pointermove", this.pointerMoveHandler);
     window.addEventListener("pointerup", this.pointerUpHandler);
+    this.canvas.addEventListener("contextmenu", this.contextMenuHandler);
   }
 
   detach(): void {
     this.keys.clear();
     this.dragging = false;
+    this.looking = false;
     window.removeEventListener("keydown", this.keydownHandler);
     window.removeEventListener("keyup", this.keyupHandler);
     this.canvas.removeEventListener("wheel", this.wheelHandler);
     this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
     window.removeEventListener("pointermove", this.pointerMoveHandler);
     window.removeEventListener("pointerup", this.pointerUpHandler);
+    this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
   }
 
   /** Anchors the camera to the nearest point on the sphere to `worldPoint`. */
@@ -136,24 +174,57 @@ export class RtsGroundCamera {
   }
 
   private onPointerDown(e: PointerEvent): void {
-    if (e.button !== 0) return;
-    this.dragging = true;
-    this.lastPointerX = e.clientX;
-    this.lastPointerY = e.clientY;
+    if (e.button === 0) {
+      this.dragging = true;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
+    } else if (e.button === 2) {
+      this.looking = true;
+      this.velLookYaw = 0;
+      this.velLookPitch = 0;
+      this.lastLookX = e.clientX;
+      this.lastLookY = e.clientY;
+      this.lastLookMoveTime = performance.now();
+    }
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (!this.dragging) return;
-    const dx = e.clientX - this.lastPointerX;
-    const dy = e.clientY - this.lastPointerY;
-    this.lastPointerX = e.clientX;
-    this.lastPointerY = e.clientY;
-    // Drag-the-map convention: dragging left pans the view the way ArrowRight does (as if
-    // grabbing the ground and pulling it under the cursor), scaled by eyeHeight so it stays
-    // proportionally grabby whether zoomed in close or pulled back.
-    const scale = DRAG_PAN_SENSITIVITY * this.eyeHeight;
-    this.pendingPanEast += -dx * scale;
-    this.pendingPanNorth += dy * scale;
+    if (this.dragging) {
+      const dx = e.clientX - this.lastPointerX;
+      const dy = e.clientY - this.lastPointerY;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
+      // Drag-the-map convention: dragging left pans the view the way ArrowRight does (as if
+      // grabbing the ground and pulling it under the cursor), scaled by eyeHeight so it stays
+      // proportionally grabby whether zoomed in close or pulled back.
+      const scale = DRAG_PAN_SENSITIVITY * this.eyeHeight;
+      this.pendingPanEast += -dx * scale;
+      this.pendingPanNorth += dy * scale;
+    }
+
+    if (this.looking) {
+      const now = performance.now();
+      const dtSeconds = Math.max(0.001, (now - this.lastLookMoveTime) / 1000);
+      const dx = e.clientX - this.lastLookX;
+      const dy = e.clientY - this.lastLookY;
+      this.lastLookX = e.clientX;
+      this.lastLookY = e.clientY;
+      this.lastLookMoveTime = now;
+      const yawDelta = dx * LOOK_SENSITIVITY;
+      const pitchDelta = dy * LOOK_SENSITIVITY;
+      this.lookYaw += yawDelta;
+      this.lookPitch = Math.min(MAX_LOOK_PITCH, Math.max(-MAX_LOOK_PITCH, this.lookPitch + pitchDelta));
+      // Clamped so a burst of pointermove events with a near-zero gap between them (can happen
+      // with high-polling-rate mice, or a very fast flick) can't produce a runaway instantaneous
+      // velocity that then takes the inertia decay well past where the drag itself let go.
+      this.velLookYaw = Math.min(MAX_LOOK_ANGULAR_VELOCITY, Math.max(-MAX_LOOK_ANGULAR_VELOCITY, yawDelta / dtSeconds));
+      this.velLookPitch = Math.min(MAX_LOOK_ANGULAR_VELOCITY, Math.max(-MAX_LOOK_ANGULAR_VELOCITY, pitchDelta / dtSeconds));
+    }
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    if (e.button === 0) this.dragging = false;
+    else if (e.button === 2) this.looking = false;
   }
 
   private onWheel(e: WheelEvent): void {
@@ -191,6 +262,22 @@ export class RtsGroundCamera {
   update(deltaSeconds: number, planetRadius: number): void {
     if (this.keys.has(keybindings.get("groundRotateRight"))) this.heading += HEADING_ROTATE_SPEED * deltaSeconds;
     if (this.keys.has(keybindings.get("groundRotateLeft"))) this.heading -= HEADING_ROTATE_SPEED * deltaSeconds;
+
+    if (!this.looking) {
+      // Ease free-look to a stop after release, same idea as OrbitTrackballCamera's drag
+      // inertia, so it doesn't feel like it snaps still the instant the mouse button lifts.
+      const speed = Math.hypot(this.velLookYaw, this.velLookPitch);
+      if (speed > MIN_LOOK_SETTLE_VELOCITY) {
+        this.lookYaw += this.velLookYaw * deltaSeconds;
+        this.lookPitch = Math.min(MAX_LOOK_PITCH, Math.max(-MAX_LOOK_PITCH, this.lookPitch + this.velLookPitch * deltaSeconds));
+        const decay = Math.exp(-LOOK_INERTIA_DECAY_PER_SEC * deltaSeconds);
+        this.velLookYaw *= decay;
+        this.velLookPitch *= decay;
+      } else {
+        this.velLookYaw = 0;
+        this.velLookPitch = 0;
+      }
+    }
 
     this.localBasis(tmpEast, tmpNorth);
 
@@ -265,6 +352,14 @@ export class RtsGroundCamera {
     // pitched steeply downward looks closer to straight down than to level).
     tmpLookDir.copyFrom(groundPos).subtractInPlace(tmpTargetPos).normalize();
     computeLookRotationToRef(tmpLookDir, this.anchor, tmpTargetRot);
+
+    // Free-look layers on top as a local-space rotation (right-drag) - it never changes
+    // tmpTargetPos/tmpLookDir above, so WASD/arrow panning always stays relative to the fixed
+    // framing regardless of which way the player is currently looking, like a turret swivel.
+    if (this.lookYaw !== 0 || this.lookPitch !== 0) {
+      Quaternion.RotationYawPitchRollToRef(this.lookYaw, this.lookPitch, 0, tmpLookOffsetQuat);
+      tmpTargetRot.multiplyToRef(tmpLookOffsetQuat, tmpTargetRot);
+    }
 
     if (this.blendStartPos && this.blendStartRot) {
       this.blendElapsed += deltaSeconds;

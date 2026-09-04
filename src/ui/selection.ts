@@ -89,6 +89,7 @@ export class SelectionUI {
   }
 
   private onPointerUp(e: PointerEvent): void {
+    if (e.button !== 0) return; // right-click drives ground-camera free-look, not selection
     const dx = e.clientX - this.pointerDownX;
     const dy = e.clientY - this.pointerDownY;
     if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD_PX) return; // was a drag, not a click
