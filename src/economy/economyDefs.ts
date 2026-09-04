@@ -62,11 +62,18 @@ export const BASE_DEFS: readonly BaseDef[] = BODY_DEFS.filter((def) => def.kind 
   ...BASE_OVERRIDES[def.name],
 }));
 
+// orbitRadiusInParentRadii is 1.3 for every station (not the previous 4-6) - same fix as the
+// Moon's own orbit radius (see scale.ts's BODY_DEFS comment): this scene's interplanetary
+// distances are compressed while a planet's own scene-unit radius isn't, so a handful of
+// "planet radii" here already reads as a huge distance once compared to nearby orbits/moons
+// (earthYard at 6x literally sat farther out than the Moon at the old 9x-of-a-*much*-smaller-
+// radii value). 1.3x keeps every station's torus sitting close against its planet, per "space
+// dock should be right up against the planet."
 export const STATION_DEFS: readonly StationDef[] = [
-  { id: "earthYard", name: "Earth Orbital Yard", faction: "solFederation", crew: 220, cargo: "Refined metals", orbitsAround: "Earth", orbitRadiusInParentRadii: 6 },
-  { id: "marsRelay", name: "Mars High Station", faction: "solFederation", crew: 90, cargo: "Ice, water", orbitsAround: "Mars", orbitRadiusInParentRadii: 5 },
-  { id: "venusRelay", name: "Venus Relay", faction: "solFederation", crew: 40, cargo: "Sulfur compounds", orbitsAround: "Venus", orbitRadiusInParentRadii: 4 },
-  { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 4 },
+  { id: "earthYard", name: "Earth Orbital Yard", faction: "solFederation", crew: 220, cargo: "Refined metals", orbitsAround: "Earth", orbitRadiusInParentRadii: 1.3 },
+  { id: "marsRelay", name: "Mars High Station", faction: "solFederation", crew: 90, cargo: "Ice, water", orbitsAround: "Mars", orbitRadiusInParentRadii: 1.3 },
+  { id: "venusRelay", name: "Venus Relay", faction: "solFederation", crew: 40, cargo: "Sulfur compounds", orbitsAround: "Venus", orbitRadiusInParentRadii: 1.3 },
+  { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 1.3 },
 ];
 
 export const SHIP_DEFS: readonly ShipDef[] = [

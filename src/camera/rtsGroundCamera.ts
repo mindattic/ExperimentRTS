@@ -22,8 +22,16 @@ const ZOOM_STEP_FRACTION = 0.12;
 const EYE_HEIGHT_LERP_RATE = 6.0;
 const PITCH_DEG = 55;
 const HEADING_ROTATE_SPEED = 1.2; // rad/s while a rotate key is held
-/** How long the entry blend from the orbit camera's last position runs. */
-const ENTRY_BLEND_SECONDS = 0.35;
+/** Minimum entry-blend duration - what the orbit<->ground handoff (always a short local hop)
+ * has always used. A direct free-cam -> ground jump (see main.ts's Alt+Space "jump to spot"
+ * flow) can start much farther away, so the actual duration used is distance-scaled up from
+ * this floor via ENTRY_BLEND_SPEED, capped at ENTRY_BLEND_MAX_SECONDS - see update(). */
+const ENTRY_BLEND_MIN_SECONDS = 0.35;
+const ENTRY_BLEND_MAX_SECONDS = 3.0;
+/** Assumed "flight speed" (units/sec) used only to convert the entry-blend distance into a
+ * duration - roughly FreeFlyCamera's own cruise speed, so a direct jump reads as a continuation
+ * of flying there rather than an arbitrary animation length. */
+const ENTRY_BLEND_SPEED = 3000;
 /** Ground-plane units of pan per pixel of drag, per unit of eyeHeight (so drag feels
  * proportionally "grabbier" when zoomed further out, like dragging a map). */
 const DRAG_PAN_SENSITIVITY = 0.012;
@@ -132,6 +140,9 @@ export class RtsGroundCamera {
   private blendStartPos: Vector3 | null = null;
   private blendStartRot: Quaternion | null = null;
   private blendElapsed = 0;
+  /** Computed once, lazily, on the blend's first update() call (see there) - null beforehand,
+   * since the actual target position (needed to measure distance) isn't known until then. */
+  private blendDurationSeconds: number | null = null;
 
   constructor(scene: Scene, canvas: HTMLCanvasElement, heightfield: PlanetHeightfield) {
     this.canvas = canvas;
@@ -146,10 +157,11 @@ export class RtsGroundCamera {
 
   /**
    * @param fromWorldPosition If given (together with fromRotation), the camera position and
-   * orientation blend in from these over ENTRY_BLEND_SECONDS instead of snapping straight to
-   * the computed ground pose - used to soften the orbit -> ground mode handoff into a real
-   * camera movement rather than a cut. Also resets eyeHeight to its max so the handoff reads
-   * as a continuation of the zoom that triggered it, not a jump to a close-up view.
+   * orientation blend in from these (over a duration scaled to the distance involved - see
+   * update()) instead of snapping straight to the computed ground pose - used to soften both the
+   * orbit -> ground mode handoff and a direct free-cam -> ground jump into a real camera
+   * movement rather than a cut. Also resets eyeHeight to its max so the handoff reads as a
+   * continuation of the zoom/flight that triggered it, not a jump to a close-up view.
    */
   attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion): void {
     this.requestExitToOrbit = false;
@@ -165,6 +177,7 @@ export class RtsGroundCamera {
       this.blendStartPos = fromWorldPosition.clone();
       this.blendStartRot = fromRotation.clone();
       this.blendElapsed = 0;
+      this.blendDurationSeconds = null;
     } else {
       this.blendStartPos = null;
       this.blendStartRot = null;
@@ -425,13 +438,22 @@ export class RtsGroundCamera {
     }
 
     if (this.blendStartPos && this.blendStartRot) {
+      if (this.blendDurationSeconds === null) {
+        // Lazily computed on the blend's first frame, once tmpTargetPos (this frame's actual
+        // target) is known - a short local hop (orbit<->ground) stays near the MIN floor, while
+        // a long-distance direct jump (free cam -> ground) takes proportionally longer instead
+        // of cramming a huge distance into the same fixed duration that a short hop uses.
+        const distance = Vector3.Distance(this.blendStartPos, tmpTargetPos);
+        this.blendDurationSeconds = Math.min(ENTRY_BLEND_MAX_SECONDS, Math.max(ENTRY_BLEND_MIN_SECONDS, distance / ENTRY_BLEND_SPEED));
+      }
       this.blendElapsed += deltaSeconds;
-      const t = easeOutCubic(Math.min(1, this.blendElapsed / ENTRY_BLEND_SECONDS));
+      const t = easeOutCubic(Math.min(1, this.blendElapsed / this.blendDurationSeconds));
       Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
       Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
       if (t >= 1) {
         this.blendStartPos = null;
         this.blendStartRot = null;
+        this.blendDurationSeconds = null;
       }
     } else {
       this.camera.position.copyFrom(tmpTargetPos);

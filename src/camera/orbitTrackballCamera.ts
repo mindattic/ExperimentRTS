@@ -9,10 +9,16 @@ const RELEVEL_RATE = 3.0; // exponential blend rate for auto re-leveling roll on
 const ZOOM_STEP_FRACTION = 0.12; // fraction of current radius per wheel notch
 const RADIUS_LERP_RATE = 4.0; // exponential blend rate for programmatic radius changes (e.g. exit-to-orbit)
 const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
-/** How long the entry blend from a prior camera's last pose runs - see enterFromWorldPose().
- * Slightly longer than RtsGroundCamera's own ENTRY_BLEND_SECONDS (0.35) since being "caught" by
- * a body's gravity well from free cam is a bigger, more dramatic transition than orbit<->ground. */
-const ENTRY_BLEND_SECONDS = 0.5;
+/** Entry-blend duration bounds for enterFromWorldPose() - same distance-scaled idea as
+ * RtsGroundCamera's own ENTRY_BLEND_MIN/MAX_SECONDS/SPEED (see that class's doc comment): free
+ * cam can now be committed to orbit from anywhere within collider range of a body, not just a
+ * tight "caught by gravity" radius, so a fixed duration would cram arbitrarily large distances
+ * into the same short window. Slightly higher floor than RtsGroundCamera's own (0.5 vs 0.35)
+ * since entering orbit from free cam is already a bigger, more dramatic transition than the
+ * always-short orbit<->ground hop. */
+const ENTRY_BLEND_MIN_SECONDS = 0.5;
+const ENTRY_BLEND_MAX_SECONDS = 3.0;
+const ENTRY_BLEND_SPEED = 3000;
 
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
@@ -50,6 +56,9 @@ export class OrbitTrackballCamera {
   private blendStartPos: Vector3 | null = null;
   private blendStartRot: Quaternion | null = null;
   private blendElapsed = 0;
+  /** Lazily computed on the blend's first update() frame, same pattern as RtsGroundCamera's own -
+   * see there for why (the actual target position isn't known until then). */
+  private blendDurationSeconds: number | null = null;
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -149,17 +158,19 @@ export class OrbitTrackballCamera {
     this.radius = value;
   }
 
-  /** Blends position/rotation in from `fromPosition`/`fromRotation` over ENTRY_BLEND_SECONDS
-   * instead of snapping straight to the pose computed from viewDir/up/radius - used when free
-   * cam gets "caught" by a body's gravity well, so the handoff reads as a continuous flight
-   * rather than a jump-cut. Same pattern as RtsGroundCamera's own attach(fromWorldPosition,
-   * fromRotation) entry blend. Call update(0) right after to seed camera.position/rotationQuaternion
-   * at the blend's t=0 start (exactly `fromPosition`/`fromRotation`) instead of leaving them at
-   * whatever stale pose the camera had before. */
+  /** Blends position/rotation in from `fromPosition`/`fromRotation` (over a distance-scaled
+   * duration - see update()) instead of snapping straight to the pose computed from
+   * viewDir/up/radius - used when committing to orbit around a selected target from free cam,
+   * so the handoff reads as a continuous flight rather than a jump-cut. Same pattern as
+   * RtsGroundCamera's own attach(fromWorldPosition, fromRotation) entry blend. Call update(0)
+   * right after to seed camera.position/rotationQuaternion at the blend's t=0 start (exactly
+   * `fromPosition`/`fromRotation`) instead of leaving them at whatever stale pose the camera had
+   * before. */
   enterFromWorldPose(fromPosition: Vector3, fromRotation: Quaternion): void {
     this.blendStartPos = fromPosition.clone();
     this.blendStartRot = fromRotation.clone();
     this.blendElapsed = 0;
+    this.blendDurationSeconds = null;
   }
 
   /** Updates the zoom clamp range - used when focus switches to a body of a different size. */
@@ -355,13 +366,18 @@ export class OrbitTrackballCamera {
     computeLookRotationToRef(tmpForward, this.up, tmpTargetRot);
 
     if (this.blendStartPos && this.blendStartRot) {
+      if (this.blendDurationSeconds === null) {
+        const distance = Vector3.Distance(this.blendStartPos, tmpTargetPos);
+        this.blendDurationSeconds = Math.min(ENTRY_BLEND_MAX_SECONDS, Math.max(ENTRY_BLEND_MIN_SECONDS, distance / ENTRY_BLEND_SPEED));
+      }
       this.blendElapsed += deltaSeconds;
-      const t = easeOutCubic(Math.min(1, this.blendElapsed / ENTRY_BLEND_SECONDS));
+      const t = easeOutCubic(Math.min(1, this.blendElapsed / this.blendDurationSeconds));
       Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
       Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
       if (t >= 1) {
         this.blendStartPos = null;
         this.blendStartRot = null;
+        this.blendDurationSeconds = null;
       }
     } else {
       this.camera.position.copyFrom(tmpTargetPos);

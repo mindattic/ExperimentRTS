@@ -18,7 +18,7 @@ import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { FreeFlyCamera } from "./camera/freeFlyCamera";
 import { computeLookRotationToRef } from "./camera/lookRotation";
 import { SolarSystem } from "./solarSystem/solarSystem";
-import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor } from "./solarSystem/scale";
+import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI } from "./ui/selection";
@@ -47,7 +47,6 @@ interface RadiusThresholds {
   minOrbit: number;
   maxOrbit: number;
   defaultOrbit: number;
-  catchRadius: number;
 }
 
 function radiusThresholds(bodyRadius: number): RadiusThresholds {
@@ -62,14 +61,14 @@ function radiusThresholds(bodyRadius: number): RadiusThresholds {
     // another body's territory (see the scale.ts spacing notes).
     maxOrbit: bodyRadius * 10,
     defaultOrbit: bodyRadius * 3.5,
-    // Free cam "catch" distance (see updateFreeCamCatch in main()) - deliberately smaller than
-    // maxOrbit, which serves a different purpose (the orbit camera's own zoom-out clamp). At
-    // 10x, a gas giant's already-large radius (Jupiter alone is 4x Earth's) balloons into a
-    // catch zone that can swallow a third of the way to its neighbors, making the "flown clear
-    // of everything" re-arm condition nearly unreachable from well within the system.
-    catchRadius: bodyRadius * 5,
   };
 }
+
+/** Free cam can't fly through a body - it collides against an invisible sphere just outside the
+ * visual surface (see resolveFreeCamCollisions), replacing the old automatic proximity "catch"
+ * into orbit, which read as jarring/involuntary. Committing to orbit around something is now
+ * always a deliberate action instead - see enterOrbitFromFreeCam and jumpToRtsAtSpot below. */
+const FREE_CAM_COLLIDER_FACTOR = 1.05;
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
@@ -144,6 +143,7 @@ async function main() {
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
+  let enterOrbitPressed = false;
   /** Alt is tap-to-toggle by default, but holding it past CURSOR_MODE_HOLD_THRESHOLD_MS instead
    * engages cursor mode only "while holding" - true once that threshold has actually fired for
    * the current press, so keyup knows whether to end a temporary hold or toggle a quick tap. */
@@ -211,10 +211,30 @@ async function main() {
     if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
-      // Keyboard alternative to left-click for the free-cam reticle - clicking under Pointer
-      // Lock works too, but a dedicated key is easier to hit without disturbing mouselook.
       e.preventDefault();
-      selectionUI.selectWithReticle();
+      // Space is the single, universal "commit" key in free cam once something's selected:
+      // - a specific surface spot pending (hold Alt/cursor mode, click a landable body - see
+      //   SelectionUI.applyPickResult) flies straight into RTS ground view anchored right there,
+      //   skipping orbit mode entirely;
+      // - otherwise, a selected body (focus list, or a plain click/reticle-pick) smoothly enters
+      //   orbit around it (lerp position + slerp rotation - see enterOrbitFromFreeCam), the same
+      //   behavior enterOrbit (Shift) triggers directly, without needing this fallback chain;
+      // - with nothing selected yet, this is the original keyboard alternative to left-click for
+      //   the free-cam reticle - clicking under Pointer Lock works too, but a dedicated key is
+      //   easier to hit without disturbing mouselook.
+      const spot = selectionUI.selectedSurfacePoint;
+      const spotBody = spot ? solarSystem.bodies[spot.bodyIndex] : null;
+      if (spot && spotBody?.landable) {
+        jumpToRtsAtSpot(spotBody, spot.localDir);
+        selectionUI.selectedSurfacePoint = null;
+      } else if (selectionUI.targetIndex !== null) {
+        enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+      } else {
+        selectionUI.selectWithReticle();
+      }
+    }
+    if (e.code === keybindings.get("enterOrbit") && freeCamActive && !e.repeat && selectionUI.targetIndex !== null) {
+      enterOrbitPressed = true;
     }
     if (e.code === keybindings.get("cursorMode") && freeCamActive && !e.repeat) {
       cursorModeHoldMode = false;
@@ -291,11 +311,6 @@ async function main() {
       freeCamReticle.hidden = false;
       cursorModeBadge.hidden = true;
       planeLockBadge.hidden = true;
-      // If free cam starts out already within some body's catch radius (the common case -
-      // free cam is usually toggled on while already close to whatever you were just orbiting),
-      // don't immediately catch it right back - require flying clear of every body's catch
-      // radius at least once first. See updateFreeCamCatch().
-      freeCamCatchArmed = !isWithinAnyBodyCatchRadius(worldPos);
     } else {
       freeFlyCamera.detach();
       freeCamActive = false;
@@ -315,49 +330,44 @@ async function main() {
     }
   }
 
-  // --- Free cam "catch": flying close enough to any body while in free cam automatically
-  // hands control to the orbit camera, framed on that body - the camera can never fly straight
-  // through a planet, it always gets caught into orbit first (which itself naturally narrows
-  // into RTS ground view on a landable body as you keep pulling in closer, and back out to
-  // orbit view as you pull away - see the enterGroundMode/exitToOrbitMode threshold checks
-  // below). Armed/disarmed by updateFreeCamCatch() rather than a plain radius check, so
-  // toggling free cam on while already close to a body doesn't instantly re-catch you.
-  let freeCamCatchArmed = false;
+  // --- Free cam collision: a simple sphere collider just outside each body's (and the star's)
+  // visual surface, so free cam can never fly through a planet - it slides along the surface
+  // instead, same as any basic sphere-collision camera. Replaces the old automatic proximity
+  // "catch" into orbit, which read as jarring/involuntary; committing to orbit or RTS view is
+  // now always a deliberate action (enterOrbitFromFreeCam/jumpToRtsAtSpot below).
+  const tmpCollisionDelta = new Vector3();
+
+  function resolveFreeCamCollisions(): void {
+    const pos = freeFlyCamera.camera.position; // unparented - position IS world position
+    for (const body of solarSystem.bodies) {
+      const bodyPos = body.orbit.spinNode.getAbsolutePosition();
+      const minDist = body.radius * FREE_CAM_COLLIDER_FACTOR;
+      tmpCollisionDelta.copyFrom(pos).subtractInPlace(bodyPos);
+      const dist = tmpCollisionDelta.length();
+      if (dist < minDist && dist > 1e-6) {
+        tmpCollisionDelta.scaleInPlace(minDist / dist);
+        pos.copyFrom(bodyPos).addInPlace(tmpCollisionDelta);
+      }
+    }
+    const starMinDist = STAR_RADIUS * FREE_CAM_COLLIDER_FACTOR;
+    const distToStar = pos.length();
+    if (distToStar < starMinDist && distToStar > 1e-6) {
+      pos.scaleInPlace(starMinDist / distToStar);
+    }
+  }
+
   const tmpCatchDir = new Vector3();
   const tmpCatchFromRot = new Quaternion();
 
-  function isWithinAnyBodyCatchRadius(worldPos: Vector3): boolean {
-    for (const body of solarSystem.bodies) {
-      const bodyPos = body.orbit.spinNode.getAbsolutePosition();
-      if (Vector3.Distance(worldPos, bodyPos) < radiusThresholds(body.radius).catchRadius) return true;
-    }
-    return false;
-  }
+  /** Commits to orbit around `target` from free cam - press-triggered (the "enterOrbit"
+   * keybinding, Shift by default) rather than automatic, once a target is selected. Blends in
+   * smoothly from free cam's exact last pose (see OrbitTrackballCamera.enterFromWorldPose). */
+  function enterOrbitFromFreeCam(target: (typeof solarSystem.bodies)[number]): void {
+    const camPos = freeFlyCamera.camera.globalPosition.clone();
+    const bodyPos = target.orbit.spinNode.getAbsolutePosition();
+    const dist = Vector3.Distance(camPos, bodyPos);
+    const targetThresholds = radiusThresholds(target.radius);
 
-  function updateFreeCamCatch(): void {
-    const camPos = freeFlyCamera.camera.globalPosition;
-    if (!freeCamCatchArmed) {
-      if (!isWithinAnyBodyCatchRadius(camPos)) freeCamCatchArmed = true;
-      return;
-    }
-    for (const body of solarSystem.bodies) {
-      const bodyPos = body.orbit.spinNode.getAbsolutePosition();
-      const dist = Vector3.Distance(camPos, bodyPos);
-      const targetThresholds = radiusThresholds(body.radius);
-      if (dist < targetThresholds.catchRadius) {
-        catchFreeCamIntoOrbit(body, targetThresholds, camPos, bodyPos, dist);
-        return;
-      }
-    }
-  }
-
-  function catchFreeCamIntoOrbit(
-    target: (typeof solarSystem.bodies)[number],
-    targetThresholds: RadiusThresholds,
-    camPos: Vector3,
-    bodyPos: Vector3,
-    dist: number,
-  ): void {
     // Same world-direction-to-local-viewDir conversion as completeTransit() below - spinNode's
     // world rotation equals its own local rotationQuaternion (its parent orbitNode never
     // rotates, only translates), so its inverse converts world directions into the frame
@@ -406,6 +416,46 @@ async function main() {
       groundCamera.setHeightfield(target.heightfield);
       groundCamera.camera.parent = target.orbit.spinNode;
     }
+  }
+
+  /** The other, faster way to commit from free cam: hold Alt (cursor mode) to click a specific
+   * surface spot, then press Space to fly straight into RTS ground view anchored right there,
+   * skipping orbit mode entirely. RtsGroundCamera's own entry blend is distance-scaled (see its
+   * ENTRY_BLEND_MIN/MAX_SECONDS), so this reads as a continuous flight even from far away. */
+  function jumpToRtsAtSpot(target: (typeof solarSystem.bodies)[number], localDir: Vector3): void {
+    if (!target.landable || !target.heightfield) return;
+    const targetThresholds = radiusThresholds(target.radius);
+
+    const fromPos = freeFlyCamera.camera.globalPosition.clone();
+    const fromRot = freeFlyCamera.camera.rotationQuaternion!.clone();
+
+    solarSystem.focusedIndex = solarSystem.bodies.indexOf(target);
+    focused = target;
+    thresholds = targetThresholds;
+
+    freeFlyCamera.detach();
+    freeCamActive = false;
+    cursorModeActive = false;
+    cancelCursorModeHold();
+    freeCamBadge.hidden = true;
+    freeCamReticle.hidden = true;
+    cursorModeBadge.hidden = true;
+    planeLockBadge.hidden = true;
+
+    groundCamera.setHeightfield(target.heightfield);
+    groundCamera.camera.parent = target.orbit.spinNode;
+    groundCamera.setAnchorFromWorldPoint(localDir);
+
+    // Defensively reparent/re-range the orbit camera too, even though it stays invisible for
+    // this whole jump, so exitToOrbitMode (scrolling/Escape back out of ground mode later) lands
+    // somewhere sane instead of still referencing whatever body was focused before this jump.
+    orbitCamera.camera.parent = target.orbit.spinNode;
+    orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
+    orbitCamera.setRadius(targetThresholds.defaultOrbit);
+
+    scene.activeCamera = groundCamera.camera;
+    groundCamera.attach(fromPos, fromRot);
+    mode = "ground";
   }
 
   // --- Interplanetary transit: continuous world-space flight (lerp position, slerp
@@ -518,7 +568,7 @@ async function main() {
 
     if (freeCamActive) {
       freeFlyCamera.update(dt);
-      updateFreeCamCatch(); // may flip freeCamActive/mode to orbit right here, mid-frame
+      resolveFreeCamCollisions();
     } else if (transiting) {
       updateTransit(dt);
     } else if (mode === "orbit") {
@@ -557,6 +607,11 @@ async function main() {
 
     if (freeCamTogglePressed) toggleFreeCam();
     freeCamTogglePressed = false;
+
+    if (enterOrbitPressed && freeCamActive && selectionUI.targetIndex !== null) {
+      enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+    }
+    enterOrbitPressed = false;
 
     // Consumed regardless of mode (not just !freeCamActive) - previously this was nested inside
     // the !freeCamActive block below, so pressing R in free cam left reorientPressed stuck true

@@ -17,7 +17,8 @@ export type Action =
   | "travel"
   | "exitGround"
   | "toggleLabels"
-  | "cursorMode";
+  | "cursorMode"
+  | "enterOrbit";
 
 export const ACTION_LABELS: Record<Action, string> = {
   orbitYawLeft: "Orbit: yaw left",
@@ -39,6 +40,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   exitGround: "Exit ground mode",
   toggleLabels: "Toggle info labels",
   cursorMode: "Toggle cursor mode (free cam)",
+  enterOrbit: "Enter orbit around selected target (free cam)",
 };
 
 const DEFAULTS: Record<Action, string> = {
@@ -63,6 +65,11 @@ const DEFAULTS: Record<Action, string> = {
   exitGround: "Escape",
   toggleLabels: "KeyL",
   cursorMode: "AltLeft",
+  // Shares the physical Shift key with FreeFlyCamera's hardcoded run-speed boost (not itself in
+  // this rebindable registry) - safe because this fires once on the keydown edge (only when a
+  // target is already selected), while the run boost is a separate, continuous "is it currently
+  // held" check; same "one physical key, two mode/state-gated behaviors" pattern as Space above.
+  enterOrbit: "ShiftLeft",
 };
 
 const STORAGE_KEY = "experimentrts.keybindings";

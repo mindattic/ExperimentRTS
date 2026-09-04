@@ -1,4 +1,4 @@
-import { AbstractEngine, Matrix, type Node, Scene, Vector3 } from "@babylonjs/core";
+import { AbstractEngine, Matrix, type Node, type PickingInfo, Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
 import type { FreeFlyCamera } from "../camera/freeFlyCamera";
 
@@ -7,6 +7,9 @@ const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body
 const CLICK_MOVE_THRESHOLD_PX = 6;
 const MIN_RETICLE_SIZE = 24;
 const MAX_RETICLE_SIZE = 180;
+
+const tmpInvMatrix = new Matrix();
+const tmpLocalPoint = new Vector3();
 
 function digitFromCode(code: string): number | null {
   const match = /^Digit(\d)$/.exec(code);
@@ -21,6 +24,12 @@ function digitFromCode(code: string): number | null {
  */
 export class SelectionUI {
   targetIndex: number | null = null;
+  /** The specific surface point (if any) a click/reticle-pick landed on, in the hit body's own
+   * local (spinNode-relative) unit direction - so it stays valid as the body spins/orbits, same
+   * pattern as Base's surfaceDir/SelectionAreaUI's anchorLocal. Populated alongside targetIndex
+   * whenever a pick actually hits body geometry (not just its bounding region); consumed by
+   * main.ts's "Alt+Space: jump straight to RTS view at this exact spot" flow. */
+  selectedSurfacePoint: { bodyIndex: number; localDir: Vector3 } | null = null;
 
   private readonly solarSystem: SolarSystem;
   private readonly scene: Scene;
@@ -127,9 +136,7 @@ export class SelectionUI {
     if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD_PX) return; // was a drag, not a click
 
     const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
-    if (!pick?.hit || !pick.pickedMesh) return;
-    const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
-    if (index !== null) this.setTarget(index);
+    this.applyPickResult(pick);
   }
 
   /** Raycasts straight down the free-cam crosshair (camera forward) and selects whatever body
@@ -138,9 +145,24 @@ export class SelectionUI {
   selectWithReticle(): void {
     const ray = this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE);
     const pick = this.scene.pickWithRay(ray);
+    this.applyPickResult(pick);
+  }
+
+  /** Shared by both pick paths above - sets targetIndex, and, whenever the pick actually hit
+   * body geometry (not just empty space or the region outside the mesh), also records the
+   * specific surface point as a body-local unit direction (converted via the body's spinNode
+   * inverse world matrix) so it stays valid as the body spins/orbits after the fact. */
+  private applyPickResult(pick: PickingInfo | null): void {
     if (!pick?.hit || !pick.pickedMesh) return;
     const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
-    if (index !== null) this.setTarget(index);
+    if (index === null) return;
+    this.setTarget(index);
+    if (pick.pickedPoint) {
+      const body = this.solarSystem.bodies[index];
+      body.orbit.spinNode.getWorldMatrix().invertToRef(tmpInvMatrix);
+      Vector3.TransformCoordinatesToRef(pick.pickedPoint, tmpInvMatrix, tmpLocalPoint);
+      this.selectedSurfacePoint = { bodyIndex: index, localDir: tmpLocalPoint.normalize().clone() };
+    }
   }
 
   private findBodyIndexForMesh(node: Node | null): number | null {
@@ -155,6 +177,12 @@ export class SelectionUI {
 
   setTarget(index: number): void {
     this.targetIndex = index;
+    // Cleared unconditionally here, then re-populated immediately after by applyPickResult when
+    // this selection actually came from a pick - otherwise a stale spot from a previous body
+    // (e.g. picked before switching targets via the digit-key focus list, which never calls
+    // applyPickResult at all) would linger and get used by main.ts's Alt+Space jump-to-spot flow
+    // as if it still applied to whatever's newly selected now.
+    this.selectedSurfacePoint = null;
   }
 
   /** Call once per frame to keep the reticle tracking the current target. */

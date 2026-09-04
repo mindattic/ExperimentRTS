@@ -38,9 +38,15 @@ export class Base implements Dockable {
     this.mesh = MeshBuilder.CreateBox(`${def.bodyName}BaseMesh`, { size, faceUV: HULL_FACE_UV }, scene);
     this.mesh.material = createHullMaterial(scene, def.faction, hashSeed(def.bodyName));
     this.mesh.parent = parentBody.orbit.spinNode;
-    // Sits just above the base radius - same "avoid z-fighting with terrain" idea as
-    // SelectionAreaUI's HEIGHT_FACTOR, though a real elevation bump could still poke through.
-    this.mesh.position.copyFrom(surfaceDir.scale(parentBody.radius * 1.01));
+    // Sits just above the ACTUAL terrain elevation at this point (sampled from the same
+    // heightfield the terrain mesh itself uses), not just a flat fraction of the body's base
+    // radius - a fixed radius*1.01 offset used to let the base visibly sink into any terrain
+    // relief taller than that 1% margin (very real on bodies like Venus, whose real elevation
+    // data has meaningfully more relief than that), since spinNode-child terrain and the base
+    // are otherwise positioned completely independently of each other.
+    const elevation = parentBody.heightfield?.elevationAt(surfaceDir) ?? 0;
+    const clearance = 20; // flat safety margin above the sampled point, same idea as RtsGroundCamera's MIN_CLEARANCE
+    this.mesh.position.copyFrom(surfaceDir.scale(parentBody.radius + elevation + clearance));
   }
 
   /** Ships arrive at a stable "high orbit near the Base" point (the planet's future position
