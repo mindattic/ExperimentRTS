@@ -16,7 +16,7 @@ const MAX_PATCHES_PER_FRAME = 3;
  * full set of 4 children is ready, so zooming in doesn't stutter or show pop-through gaps.
  */
 export class PlanetTerrain {
-  private readonly heightfield: PlanetHeightfield;
+  readonly heightfield: PlanetHeightfield;
   private readonly material: StandardMaterial;
   private readonly roots: QuadNode[] = [];
   private readonly generationQueue: QuadNode[] = [];
