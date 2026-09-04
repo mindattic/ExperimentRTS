@@ -144,14 +144,49 @@ async function main() {
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
-  let cursorModeTogglePressed = false;
+  /** Alt is tap-to-toggle by default, but holding it past CURSOR_MODE_HOLD_THRESHOLD_MS instead
+   * engages cursor mode only "while holding" - true once that threshold has actually fired for
+   * the current press, so keyup knows whether to end a temporary hold or toggle a quick tap. */
+  let cursorModeHoldMode = false;
+  let cursorModeHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  const CURSOR_MODE_HOLD_THRESHOLD_MS = 500;
   // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
   // flies the camera back up past the enterGround threshold - without it, that upward flight's
   // own still-below-threshold starting radius would immediately bounce straight back into
   // ground mode before it ever got anywhere (see exitToOrbitMode/enterGroundMode below).
   let groundExitCooldownRemaining = 0;
 
-  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive, () => mode === "orbit" && !freeCamActive && !transiting);
+  /** Single place that actually engages/disengages cursor mode - both the tap-toggle and the
+   * hold-mode paths (keydown/keyup handlers below) funnel through this so the camera, badge,
+   * and reticle always stay in sync regardless of which path drove the change. */
+  function setCursorModeActive(active: boolean): void {
+    cursorModeActive = active;
+    freeFlyCamera.setCursorMode(active);
+    cursorModeBadge.hidden = !active;
+    freeCamReticle.hidden = !freeCamActive || active;
+  }
+
+  /** Cleans up any in-flight hold-timer/hold-state - called whenever free cam exits altogether
+   * (toggled off, or caught into orbit), so a stale timer from a press that was interrupted
+   * mid-hold can't fire later and reactivate cursor mode on whatever camera is active by then. */
+  function cancelCursorModeHold(): void {
+    if (cursorModeHoldTimer !== null) {
+      clearTimeout(cursorModeHoldTimer);
+      cursorModeHoldTimer = null;
+    }
+    cursorModeHoldMode = false;
+  }
+
+  const selectionUI = new SelectionUI(
+    solarSystem,
+    scene,
+    engine,
+    canvas,
+    freeFlyCamera,
+    () => freeCamActive,
+    () => mode === "orbit" && !freeCamActive && !transiting,
+    () => cursorModeActive,
+  );
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
   const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
@@ -181,7 +216,35 @@ async function main() {
       e.preventDefault();
       selectionUI.selectWithReticle();
     }
-    if (e.code === keybindings.get("cursorMode") && freeCamActive) cursorModeTogglePressed = true;
+    if (e.code === keybindings.get("cursorMode") && freeCamActive && !e.repeat) {
+      cursorModeHoldMode = false;
+      cursorModeHoldTimer = setTimeout(() => {
+        cursorModeHoldTimer = null;
+        if (!freeCamActive) return;
+        cursorModeHoldMode = true;
+        setCursorModeActive(true);
+      }, CURSOR_MODE_HOLD_THRESHOLD_MS);
+    }
+  });
+
+  // Tap Alt (release before the hold threshold) to toggle cursor mode persistently; hold it past
+  // the threshold to use it only "while holding" - the keydown timer above engages cursor mode
+  // the instant the hold threshold is crossed, and this keyup handler decides, based on whether
+  // that happened, whether release should end a temporary hold or toggle a completed tap.
+  window.addEventListener("keyup", (e) => {
+    if (settingsMenu.isListeningForKey) return;
+    if (e.code !== keybindings.get("cursorMode")) return;
+    if (cursorModeHoldTimer !== null) {
+      clearTimeout(cursorModeHoldTimer);
+      cursorModeHoldTimer = null;
+    }
+    if (!freeCamActive) return;
+    if (cursorModeHoldMode) {
+      cursorModeHoldMode = false;
+      setCursorModeActive(false);
+    } else {
+      setCursorModeActive(!cursorModeActive);
+    }
   });
 
   function enterGroundMode() {
@@ -223,6 +286,7 @@ async function main() {
       freeFlyCamera.attach();
       freeCamActive = true;
       cursorModeActive = false;
+      cancelCursorModeHold();
       freeCamBadge.hidden = false;
       freeCamReticle.hidden = false;
       cursorModeBadge.hidden = true;
@@ -236,6 +300,7 @@ async function main() {
       freeFlyCamera.detach();
       freeCamActive = false;
       cursorModeActive = false;
+      cancelCursorModeHold();
       freeCamBadge.hidden = true;
       freeCamReticle.hidden = true;
       cursorModeBadge.hidden = true;
@@ -315,6 +380,7 @@ async function main() {
     freeFlyCamera.detach();
     freeCamActive = false;
     cursorModeActive = false;
+    cancelCursorModeHold();
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
     cursorModeBadge.hidden = true;
@@ -492,10 +558,16 @@ async function main() {
     if (freeCamTogglePressed) toggleFreeCam();
     freeCamTogglePressed = false;
 
-    if (!freeCamActive) {
-      if (reorientPressed && mode === "orbit") orbitCamera.reorient();
-      reorientPressed = false;
+    // Consumed regardless of mode (not just !freeCamActive) - previously this was nested inside
+    // the !freeCamActive block below, so pressing R in free cam left reorientPressed stuck true
+    // (never reset) until free cam turned off, at which point it fired late/out of context.
+    if (reorientPressed) {
+      if (freeCamActive) freeFlyCamera.reorient();
+      else if (mode === "orbit") orbitCamera.reorient();
+    }
+    reorientPressed = false;
 
+    if (!freeCamActive) {
       if (lockPlaneTogglePressed && mode === "orbit") {
         orbitCamera.setPlaneLocked(!orbitCamera.isPlaneLocked);
         planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
@@ -530,14 +602,6 @@ async function main() {
       }
     }
     escapePressed = false;
-
-    if (cursorModeTogglePressed && freeCamActive) {
-      cursorModeActive = !cursorModeActive;
-      freeFlyCamera.setCursorMode(cursorModeActive);
-      cursorModeBadge.hidden = !cursorModeActive;
-      freeCamReticle.hidden = cursorModeActive;
-    }
-    cursorModeTogglePressed = false;
 
     // Runs regardless of mode, including free cam, so the corner-bracket target-lock reticle
     // keeps tracking a selected body's screen position (via scene.activeCamera, which is

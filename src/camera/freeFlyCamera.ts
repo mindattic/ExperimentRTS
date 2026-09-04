@@ -1,9 +1,12 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import { keybindings } from "../input/keybindings";
+import { computeLookRotationToRef } from "./lookRotation";
 
 const MOVE_SPEED = 2400; // units/sec - fast enough to cross interplanetary distances in a reasonable time
 const RUN_MULTIPLIER = 4; // holding Shift
 const LOOK_SENSITIVITY = 0.0025; // radians per pixel of raw mouse movement
+/** Exponential blend rate for reorient() - same idea as OrbitTrackballCamera's RELEVEL_RATE. */
+const REORIENT_RATE = 4.0;
 
 const tmpForward = new Vector3();
 const tmpRight = new Vector3();
@@ -23,6 +26,8 @@ export class FreeFlyCamera {
   readonly camera: UniversalCamera;
 
   private cursorModeActive = false;
+  private reorienting = false;
+  private readonly reorientTargetRot = new Quaternion();
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
   private mouseMoveHandler = (e: MouseEvent) => this.onMouseMove(e);
@@ -100,8 +105,24 @@ export class FreeFlyCamera {
     return this.cursorModeActive;
   }
 
+  /** Levels pitch/roll back to a flat horizon while keeping the current heading (yaw) - unlike
+   * OrbitTrackballCamera's reorient(), which re-levels a free-tumbling roll, FreeFlyCamera's
+   * yaw-around-world-up/pitch-around-local-right mouselook can never accumulate roll on its
+   * own, so this only ever has pitch to correct. Blends smoothly (same idea as every other
+   * camera's programmatic moves in this codebase) rather than snapping. */
+  reorient(): void {
+    Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
+    Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
+    tmpForward.y = 0;
+    if (tmpForward.lengthSquared() < 1e-6) return; // looking almost straight up/down - no well-defined heading to level to
+    tmpForward.normalize();
+    computeLookRotationToRef(tmpForward, Vector3.Up(), this.reorientTargetRot);
+    this.reorienting = true;
+  }
+
   private onMouseMove(e: MouseEvent): void {
     if (document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. user pressed Escape)
+    this.reorienting = false; // manual look input always takes over from a programmatic reorient
     const yaw = e.movementX * LOOK_SENSITIVITY;
     const pitch = e.movementY * LOOK_SENSITIVITY;
 
@@ -118,6 +139,17 @@ export class FreeFlyCamera {
   }
 
   update(deltaSeconds: number): void {
+    if (this.reorienting) {
+      const blend = 1 - Math.exp(-REORIENT_RATE * deltaSeconds);
+      Quaternion.SlerpToRef(this.camera.rotationQuaternion!, this.reorientTargetRot, blend, this.camera.rotationQuaternion!);
+      const dot =
+        this.camera.rotationQuaternion!.x * this.reorientTargetRot.x +
+        this.camera.rotationQuaternion!.y * this.reorientTargetRot.y +
+        this.camera.rotationQuaternion!.z * this.reorientTargetRot.z +
+        this.camera.rotationQuaternion!.w * this.reorientTargetRot.w;
+      if (Math.abs(dot) > 0.9999) this.reorienting = false;
+    }
+
     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
     Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
     Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);

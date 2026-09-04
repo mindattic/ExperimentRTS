@@ -33,6 +33,7 @@ export class SelectionUI {
   private readonly reticleLabelEl: HTMLElement;
   private readonly orbitFocusLabelEl: HTMLElement;
   private readonly isOrbitMode: () => boolean;
+  private readonly isCursorModeActive: () => boolean;
   private listOpen = false;
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -45,6 +46,7 @@ export class SelectionUI {
     freeFlyCamera: FreeFlyCamera,
     isFreeCamActive: () => boolean,
     isOrbitMode: () => boolean,
+    isCursorModeActive: () => boolean,
   ) {
     this.solarSystem = solarSystem;
     this.scene = scene;
@@ -52,6 +54,7 @@ export class SelectionUI {
     this.freeFlyCamera = freeFlyCamera;
     this.isFreeCamActive = isFreeCamActive;
     this.isOrbitMode = isOrbitMode;
+    this.isCursorModeActive = isCursorModeActive;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
@@ -110,9 +113,11 @@ export class SelectionUI {
   private onPointerUp(e: PointerEvent): void {
     if (e.button !== 0) return; // right-click drives ground-camera free-look, not selection
 
-    if (this.isFreeCamActive()) {
+    if (this.isFreeCamActive() && !this.isCursorModeActive()) {
       // Pointer Lock hides the cursor and freezes clientX/clientY at wherever the lock engaged,
-      // so a screen-coordinate pick is meaningless here - raycast via the reticle instead.
+      // so a screen-coordinate pick is meaningless here - raycast via the reticle instead. Once
+      // cursor mode frees a real, moving cursor, though, a normal screen-coordinate pick below
+      // works exactly like it does in orbit mode - the cursor might not be at screen-center.
       this.selectWithReticle();
       return;
     }
