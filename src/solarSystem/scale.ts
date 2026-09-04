@@ -104,7 +104,15 @@ export const BODY_DEFS: readonly BodyDef[] = [
   { name: "Mercury", kind: "rocky", auDistance: 0.39, orbitYears: 0.24, eccentricity: 0.02, relativeRadius: 0.45, realDiameterRatio: 0.38, spinPeriodSeconds: 150, seed: 101, atmosphereLevel: 0 },
   { name: "Venus", kind: "rocky", auDistance: 0.72, orbitYears: 0.62, eccentricity: 0.01, relativeRadius: 0.9, realDiameterRatio: 0.95, spinPeriodSeconds: 260, seed: 102, atmosphereLevel: 0.15, retrograde: true },
   { name: "Earth", kind: "rocky", auDistance: 1.0, orbitYears: 1.0, eccentricity: 0.02, relativeRadius: 1.0, realDiameterRatio: 1.0, spinPeriodSeconds: 200, seed: 1337, atmosphereLevel: 0.4 },
-  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 9, moonOrbitPeriodSeconds: 900 },
+  // moonOrbitRadiusInParentRadii is 2 here, not the real ~9-60x - this scene's interplanetary
+  // distances are compressed through sceneDistance()'s power curve while EARTH_RADIUS itself
+  // is NOT compressed by that same factor (planets are drawn much bigger relative to their
+  // orbital spacing than reality, a deliberate "fun over accuracy" choice - see sceneDistance's
+  // doc comment). At the real-ish value of 9, the Moon's orbit around Earth (radius 9*2000=18000
+  // units) came out bigger than Mercury's entire orbit around the sun (radius ~15184 units) -
+  // obviously wrong once both are drawn as orbit lines in the same scene. 2x (4000 units) keeps
+  // the Moon's near/far points comfortably inside the Earth-Venus/Earth-Mars gaps instead.
+  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 2, moonOrbitPeriodSeconds: 900 },
   { name: "Mars", kind: "rocky", auDistance: 1.52, orbitYears: 1.88, eccentricity: 0.02, relativeRadius: 0.55, realDiameterRatio: 0.53, spinPeriodSeconds: 210, seed: 103, atmosphereLevel: 0.05 },
   { name: "Jupiter", kind: "gasGiant", auDistance: 5.2, orbitYears: 11.9, eccentricity: 0.02, relativeRadius: 4.0, realDiameterRatio: 11.2, spinPeriodSeconds: 90, seed: 104, atmosphereLevel: 0 },
   { name: "Saturn", kind: "gasGiant", auDistance: 9.5, orbitYears: 29.4, eccentricity: 0.02, relativeRadius: 3.5, realDiameterRatio: 9.45, spinPeriodSeconds: 95, seed: 105, atmosphereLevel: 0 },

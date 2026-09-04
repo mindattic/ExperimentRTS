@@ -13,6 +13,7 @@ export const QUALITY_PRESETS: readonly QualityPreset[] = [
 
 const STORAGE_KEY = "experimentrts.graphics";
 const DEFAULT_PRESET_INDEX = 2; // High
+const DEFAULT_DEVELOPER_MODE = true;
 const DEFAULT_NIGHT_BRIGHTNESS = 0.05;
 export const MIN_NIGHT_BRIGHTNESS = 0.02;
 export const MAX_NIGHT_BRIGHTNESS = 0.3;
@@ -29,6 +30,9 @@ class GraphicsSettings {
   /** Selection-area drag direction (see SelectionAreaUI): normally up/right grows, left/down
    * shrinks - flipped when this is true. */
   invertSelectionAreaResize = false;
+  /** Shows the bottom-left developer stats overlay (main.ts) - distance from the focused body,
+   * FPS, current mode, etc. On by default for this project's dev-focused current stage. */
+  developerMode = DEFAULT_DEVELOPER_MODE;
 
   constructor() {
     this.load();
@@ -53,14 +57,25 @@ class GraphicsSettings {
     this.save();
   }
 
+  setDeveloperMode(value: boolean): void {
+    this.developerMode = value;
+    this.save();
+  }
+
   private load(): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const data = JSON.parse(raw) as { presetIndex?: number; nightBrightness?: number; invertSelectionAreaResize?: boolean };
+        const data = JSON.parse(raw) as {
+          presetIndex?: number;
+          nightBrightness?: number;
+          invertSelectionAreaResize?: boolean;
+          developerMode?: boolean;
+        };
         if (typeof data.presetIndex === "number") this.presetIndex = data.presetIndex;
         if (typeof data.nightBrightness === "number") this.nightBrightness = data.nightBrightness;
         if (typeof data.invertSelectionAreaResize === "boolean") this.invertSelectionAreaResize = data.invertSelectionAreaResize;
+        if (typeof data.developerMode === "boolean") this.developerMode = data.developerMode;
       }
     } catch {
       // localStorage unavailable or corrupted - fall back to default silently.
@@ -75,6 +90,7 @@ class GraphicsSettings {
           presetIndex: this.presetIndex,
           nightBrightness: this.nightBrightness,
           invertSelectionAreaResize: this.invertSelectionAreaResize,
+          developerMode: this.developerMode,
         }),
       );
     } catch {

@@ -47,13 +47,30 @@ export class FreeFlyCamera {
   }
 
   attach(): void {
-    // Requested synchronously from the F-keypress handler that calls attach(), which counts
-    // as the user gesture the Pointer Lock API requires.
     this.cursorModeActive = false;
-    this.canvas.requestPointerLock();
+    this.requestPointerLockWithRetry();
     window.addEventListener("mousemove", this.mouseMoveHandler);
     window.addEventListener("keydown", this.keydownHandler);
     window.addEventListener("keyup", this.keyupHandler);
+  }
+
+  /** Requesting Pointer Lock from the F-keypress handler that normally calls attach() counts as
+   * the user gesture the API requires, and just works. But attach() can also fire from purely
+   * wheel-driven input (scrolling out past orbit's max zoom auto-releases to free cam) - wheel
+   * events aren't a qualifying "transient activation" gesture for Pointer Lock in browsers, so
+   * that request silently rejects and mouselook would otherwise never engage. Falls back to
+   * retrying on the next genuine click on the canvas, which does qualify. */
+  private requestPointerLockWithRetry(): void {
+    const result = this.canvas.requestPointerLock() as unknown;
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch(() => {
+        const retryOnce = () => {
+          this.canvas.removeEventListener("pointerdown", retryOnce);
+          if (!this.cursorModeActive && document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock();
+        };
+        this.canvas.addEventListener("pointerdown", retryOnce);
+      });
+    }
   }
 
   detach(): void {
@@ -75,7 +92,7 @@ export class FreeFlyCamera {
     if (active) {
       if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     } else if (document.pointerLockElement !== this.canvas) {
-      this.canvas.requestPointerLock();
+      this.requestPointerLockWithRetry();
     }
   }
 

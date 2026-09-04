@@ -1,4 +1,4 @@
-import { Mesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3 } from "@babylonjs/core";
+import { Mesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
 import type { Dockable } from "./dockable";
 import type { ShipDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
@@ -14,6 +14,11 @@ type ShipPhase = "docked" | "transit";
  * PlanetTerrain.visit() already uses for its own mesh/child swap, just without a quadtree. */
 const SHIP_BILLBOARD_DISTANCE = EARTH_RADIUS * 8;
 const ICON_SIZE = 40;
+/** Ship trajectories are dashed (not solid, like planet/station orbit lines) to read as a
+ * moving asset's planned path rather than a fixed orbit - Babylon's built-in CreateDashedLines
+ * handles the segment-count bookkeeping internally, no custom shader needed. */
+const TRAJECTORY_DASH_SIZE = 200;
+const TRAJECTORY_GAP_SIZE = 150;
 
 /** Resolves a route-stop id (a Base's bodyName or a Station's id) to its Dockable. */
 export type StopResolver = (id: string) => Dockable;
@@ -36,6 +41,7 @@ export class Ship {
   currentSpeed = 0;
   etaSeconds = 0;
 
+  private readonly scene: Scene;
   private phase: ShipPhase = "docked";
   private profile: FlightProfile | null = null;
   private elapsed = 0;
@@ -43,10 +49,12 @@ export class Ship {
   private routeIndex: number;
   private routeDirection: 1 | -1 = 1;
   private currentDestination: Dockable | null = null;
+  private trajectoryLine: LinesMesh | null = null;
   private readonly qPrograde = new Quaternion();
   private readonly qRetrograde = new Quaternion();
 
   constructor(scene: Scene, def: ShipDef, startDock: Dockable) {
+    this.scene = scene;
     this.def = def;
     this.routeIndex = def.startRouteIndex ?? 0;
     // Randomized so a whole roster doesn't all depart in the same frame.
@@ -114,6 +122,8 @@ export class Ship {
     this.currentDestination!.predictWorldPositionAt(0, this.root.position);
     this.phase = "docked";
     this.dwellRemaining = this.def.dwellSeconds;
+    this.trajectoryLine?.dispose();
+    this.trajectoryLine = null;
   }
 
   private departNext(resolveStop: StopResolver): void {
@@ -125,6 +135,16 @@ export class Ship {
     this.elapsed = 0;
     this.phase = "transit";
     this.currentDestination = destination;
+
+    this.trajectoryLine?.dispose();
+    this.trajectoryLine = MeshBuilder.CreateDashedLines(
+      `${this.def.id}Trajectory`,
+      { points: [this.profile.from, this.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
+      this.scene,
+    );
+    this.trajectoryLine.color = FACTION_PALETTES[this.def.faction].accent;
+    this.trajectoryLine.alpha = 0.5;
+    this.trajectoryLine.isPickable = false;
   }
 
   /** Bounces at either end of the route rather than looping back to the start - the simplest

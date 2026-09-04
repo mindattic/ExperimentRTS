@@ -31,6 +31,8 @@ export class SelectionUI {
   private readonly focusListItemsEl: HTMLOListElement;
   private readonly reticleEl: HTMLElement;
   private readonly reticleLabelEl: HTMLElement;
+  private readonly orbitFocusLabelEl: HTMLElement;
+  private readonly isOrbitMode: () => boolean;
   private listOpen = false;
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -42,16 +44,19 @@ export class SelectionUI {
     canvas: HTMLCanvasElement,
     freeFlyCamera: FreeFlyCamera,
     isFreeCamActive: () => boolean,
+    isOrbitMode: () => boolean,
   ) {
     this.solarSystem = solarSystem;
     this.scene = scene;
     this.engine = engine;
     this.freeFlyCamera = freeFlyCamera;
     this.isFreeCamActive = isFreeCamActive;
+    this.isOrbitMode = isOrbitMode;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
     this.reticleLabelEl = document.getElementById("reticleLabel")!;
+    this.orbitFocusLabelEl = document.getElementById("orbitFocusLabel")!;
 
     this.populateList();
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
@@ -149,6 +154,17 @@ export class SelectionUI {
 
   /** Call once per frame to keep the reticle tracking the current target. */
   update(): void {
+    if (this.isOrbitMode()) {
+      // The corner-bracket reticle is for picking a travel target from afar (free cam) - once
+      // you're actually in orbit around something, it's redundant/distracting. Swap it for a
+      // plain always-on top-center label naming whatever you're currently orbiting instead.
+      this.reticleEl.hidden = true;
+      this.orbitFocusLabelEl.hidden = false;
+      this.orbitFocusLabelEl.textContent = this.solarSystem.focused.def.name;
+      return;
+    }
+    this.orbitFocusLabelEl.hidden = true;
+
     if (this.targetIndex === null) {
       this.reticleEl.hidden = true;
       return;

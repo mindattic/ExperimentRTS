@@ -9,12 +9,23 @@ const RELEVEL_RATE = 3.0; // exponential blend rate for auto re-leveling roll on
 const ZOOM_STEP_FRACTION = 0.12; // fraction of current radius per wheel notch
 const RADIUS_LERP_RATE = 4.0; // exponential blend rate for programmatic radius changes (e.g. exit-to-orbit)
 const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
+/** How long the entry blend from a prior camera's last pose runs - see enterFromWorldPose().
+ * Slightly longer than RtsGroundCamera's own ENTRY_BLEND_SECONDS (0.35) since being "caught" by
+ * a body's gravity well from free cam is a bigger, more dramatic transition than orbit<->ground. */
+const ENTRY_BLEND_SECONDS = 0.5;
 
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
 const tmpRight = new Vector3();
 const tmpIdealUp = new Vector3();
 const tmpForward = new Vector3();
+const tmpTargetPos = new Vector3();
+const tmpTargetRot = new Quaternion();
+
+function easeOutCubic(t: number): number {
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
 
 /**
  * Free trackball orbit camera: drag in any direction to tumble the view around the planet
@@ -32,6 +43,13 @@ export class OrbitTrackballCamera {
   maxRadius: number;
 
   private targetRadius: number | null = null;
+  /** Set for one frame when the player zooms out past maxRadius while already there - signals
+   * the caller to release control back to free cam, mirroring RtsGroundCamera's own
+   * requestExitToOrbit at the opposite end of the "swim through the system" continuum. */
+  requestExitToFreeCam = false;
+  private blendStartPos: Vector3 | null = null;
+  private blendStartRot: Quaternion | null = null;
+  private blendElapsed = 0;
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -72,6 +90,7 @@ export class OrbitTrackballCamera {
   }
 
   attach(): void {
+    this.requestExitToFreeCam = false;
     this.canvas.addEventListener("pointerdown", this.pointerDownHandler);
     window.addEventListener("pointermove", this.pointerMoveHandler);
     window.addEventListener("pointerup", this.pointerUpHandler);
@@ -128,6 +147,19 @@ export class OrbitTrackballCamera {
   setRadius(value: number): void {
     this.targetRadius = null;
     this.radius = value;
+  }
+
+  /** Blends position/rotation in from `fromPosition`/`fromRotation` over ENTRY_BLEND_SECONDS
+   * instead of snapping straight to the pose computed from viewDir/up/radius - used when free
+   * cam gets "caught" by a body's gravity well, so the handoff reads as a continuous flight
+   * rather than a jump-cut. Same pattern as RtsGroundCamera's own attach(fromWorldPosition,
+   * fromRotation) entry blend. Call update(0) right after to seed camera.position/rotationQuaternion
+   * at the blend's t=0 start (exactly `fromPosition`/`fromRotation`) instead of leaving them at
+   * whatever stale pose the camera had before. */
+  enterFromWorldPose(fromPosition: Vector3, fromRotation: Quaternion): void {
+    this.blendStartPos = fromPosition.clone();
+    this.blendStartRot = fromRotation.clone();
+    this.blendElapsed = 0;
   }
 
   /** Updates the zoom clamp range - used when focus switches to a body of a different size. */
@@ -212,8 +244,14 @@ export class OrbitTrackballCamera {
     // itself always flows via flyToRadius's smoothing, never jumps straight to the new radius.
     const base = this.targetRadius ?? this.radius;
     const factor = 1 + Math.sign(e.deltaY) * ZOOM_STEP_FRACTION;
-    const next = Math.min(this.maxRadius, Math.max(this.minRadius, base * factor));
-    this.flyToRadius(next);
+    const raw = base * factor;
+    if (raw > this.maxRadius && base >= this.maxRadius) {
+      // Already at the zoom-out limit and still scrolling out further - hand off to free cam
+      // (mirrors RtsGroundCamera's own requestExitToOrbit at the opposite end of the continuum).
+      this.requestExitToFreeCam = true;
+      return;
+    }
+    this.flyToRadius(Math.min(this.maxRadius, Math.max(this.minRadius, raw)));
   }
 
   /** Rotates viewDir (and, for the pitch component, up) around the CURRENT local axes - not
@@ -309,11 +347,25 @@ export class OrbitTrackballCamera {
       }
     }
 
-    this.camera.position.copyFrom(this.viewDir).scaleInPlace(this.radius);
+    tmpTargetPos.copyFrom(this.viewDir).scaleInPlace(this.radius);
     // The camera looks toward the planet center, i.e. the opposite of viewDir (which points
     // from center to camera). See lookRotation.ts for why this goes through
     // computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
     tmpForward.copyFrom(this.viewDir).scaleInPlace(-1);
-    computeLookRotationToRef(tmpForward, this.up, this.camera.rotationQuaternion!);
+    computeLookRotationToRef(tmpForward, this.up, tmpTargetRot);
+
+    if (this.blendStartPos && this.blendStartRot) {
+      this.blendElapsed += deltaSeconds;
+      const t = easeOutCubic(Math.min(1, this.blendElapsed / ENTRY_BLEND_SECONDS));
+      Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
+      Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
+      if (t >= 1) {
+        this.blendStartPos = null;
+        this.blendStartRot = null;
+      }
+    } else {
+      this.camera.position.copyFrom(tmpTargetPos);
+      this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
+    }
   }
 }

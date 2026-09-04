@@ -1,4 +1,6 @@
 import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
+import { mulberry32 } from "../terrain/prng";
+import { hashSeed } from "./hullTexture";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import { CelestialOrbit } from "../solarSystem/celestialOrbit";
 import { spinPeriodSeconds } from "../solarSystem/scale";
@@ -71,7 +73,10 @@ export class Station implements Dockable {
     // composition carries this station's small local ellipse along with wherever the planet
     // currently is, for free.
     this.orbit.orbitNode.parent = parentBody.orbit.orbitNode;
-    this.orbit.createOrbitLine(scene, `${def.id}OrbitLine`, undefined, parentBody.orbit.orbitNode);
+    // Same deterministic per-entity hue idea as SolarSystem's own orbit lines, just keyed off
+    // the station's id hash instead of a numeric seed.
+    const hue = mulberry32(hashSeed(def.id))() * 360;
+    this.orbit.createOrbitLine(scene, `${def.id}OrbitLine`, Color3.FromHSV(hue, 0.55, 0.95), parentBody.orbit.orbitNode);
 
     const outerRadius = Math.max(20, parentBody.radius * 0.05);
     this.mesh = MeshBuilder.CreateTorus(`${def.id}Mesh`, { diameter: outerRadius * 2, thickness: outerRadius * 0.28, tessellation: 24 }, scene);

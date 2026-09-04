@@ -23,20 +23,21 @@ export class StellarDust {
     ctx.fillRect(0, 0, size, size);
     texture.update(false);
 
-    const ps = new ParticleSystem("stellarDust", 500, scene);
+    const ps = new ParticleSystem("stellarDust", 2000, scene);
     ps.particleTexture = texture;
     ps.emitter = emitterPosition;
     // This scene's units run into the thousands/tens-of-thousands (planet radii ~2000+,
     // distances ~28000+) - a "normal" particle size of a few units would be imperceptibly
     // tiny even right next to the camera, so both the spawn volume and particle size are
-    // scaled way up to actually read on screen at this scale.
+    // scaled up to actually read on screen at this scale - but kept small/numerous (hundreds
+    // of little streaks, not a handful of huge ones) rather than scaled up as far as the box.
     ps.minEmitBox = new Vector3(-400, -400, -400);
     ps.maxEmitBox = new Vector3(400, 400, 400);
     ps.color1 = new Color4(0.85, 0.9, 1, 1);
     ps.color2 = new Color4(1, 1, 1, 1);
     ps.colorDead = new Color4(0.7, 0.8, 1, 0);
-    ps.minSize = 40;
-    ps.maxSize = 90;
+    ps.minSize = 4;
+    ps.maxSize = 10;
     ps.minLifeTime = 0.4;
     ps.maxLifeTime = 0.8;
     ps.minEmitPower = 2500;

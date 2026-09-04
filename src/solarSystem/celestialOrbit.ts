@@ -111,7 +111,7 @@ export class CelestialOrbit {
     }
     const line = MeshBuilder.CreateLines(name, { points }, scene);
     line.color = color;
-    line.alpha = 0.35;
+    line.alpha = 0.2; // 80% transparent
     line.isPickable = false;
     line.parent = parentNode;
   }

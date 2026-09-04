@@ -307,6 +307,49 @@ body {
   display: none;
 }
 
+.orbit-focus-label {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 6px 16px;
+  font-family: system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #eee;
+  background: rgba(20, 20, 24, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.orbit-focus-label[hidden] {
+  display: none;
+}
+
+.dev-stats {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 10;
+  padding: 8px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: #9cff9c;
+  background: rgba(10, 10, 12, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.dev-stats[hidden] {
+  display: none;
+}
+
 .examine-layer {
   position: fixed;
   top: 0;

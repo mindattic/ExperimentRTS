@@ -1,4 +1,4 @@
-import { DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
+import { Color3, DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
 import { Star } from "../environment/star";
 import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
@@ -12,6 +12,14 @@ const tmpSunDirection = new Vector3();
 function jitteredAxis(base: Vector3, rand: () => number, spread: number): Vector3 {
   const jitter = new Vector3((rand() - 0.5) * spread, 0, (rand() - 0.5) * spread);
   return base.add(jitter).normalize();
+}
+
+/** Deterministic per-body orbit-line color, keyed off the body's own procedural-terrain seed
+ * (already a unique per-body number) so every orbit reads as visually distinct rather than one
+ * indistinguishable gray loop for the whole system - full saturation/value, only hue varies. */
+function orbitLineColorFor(seed: number): Color3 {
+  const hue = mulberry32(seed * 7919 + 13)() * 360;
+  return Color3.FromHSV(hue, 0.55, 0.95);
 }
 
 /** Owns the star, every CelestialBody, the decorative asteroid belt, and the background starfield. */
@@ -57,7 +65,7 @@ export class SolarSystem {
         },
         heightmapImages[def.name],
       );
-      body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`);
+      body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
       return body;
     });
 
@@ -80,7 +88,7 @@ export class SolarSystem {
         heightmapImages[def.name],
       );
       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
-      moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, undefined, parent.orbit.orbitNode);
+      moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);
       this.bodies.push(moon);
     }
 

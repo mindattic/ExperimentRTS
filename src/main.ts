@@ -34,6 +34,7 @@ const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
 const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
 const cursorModeBadge = document.getElementById("cursorModeBadge") as HTMLElement;
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
+const devStats = document.getElementById("devStats") as HTMLElement;
 
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
@@ -51,8 +52,11 @@ interface RadiusThresholds {
 
 function radiusThresholds(bodyRadius: number): RadiusThresholds {
   return {
-    enterGround: bodyRadius * 1.06,
-    exitOrbit: bodyRadius * 1.25,
+    // Raised from 1.06/1.25 per "transition to RTS view much further out" - ground mode now
+    // kicks in (and hands back to orbit) noticeably farther from the surface, matching
+    // RtsGroundCamera's own much larger MAX_EYE_HEIGHT.
+    enterGround: bodyRadius * 1.35,
+    exitOrbit: bodyRadius * 1.5,
     minOrbit: bodyRadius * 1.02,
     // Capped below the gap to the nearest neighboring body so zooming out doesn't wander into
     // another body's territory (see the scale.ts spacing notes).
@@ -147,7 +151,7 @@ async function main() {
   // ground mode before it ever got anywhere (see exitToOrbitMode/enterGroundMode below).
   let groundExitCooldownRemaining = 0;
 
-  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
+  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive, () => mode === "orbit" && !freeCamActive && !transiting);
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
   const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
@@ -255,6 +259,7 @@ async function main() {
   // toggling free cam on while already close to a body doesn't instantly re-catch you.
   let freeCamCatchArmed = false;
   const tmpCatchDir = new Vector3();
+  const tmpCatchFromRot = new Quaternion();
 
   function isWithinAnyBodyCatchRadius(worldPos: Vector3): boolean {
     for (const body of solarSystem.bodies) {
@@ -302,6 +307,11 @@ async function main() {
     focused = target;
     thresholds = targetThresholds;
 
+    // Captured before detach() so the orbit camera can blend in continuously from exactly where
+    // free cam left off, rather than jump-cutting to the computed orbit pose - see
+    // enterFromWorldPose's own doc comment.
+    tmpCatchFromRot.copyFrom(freeFlyCamera.camera.rotationQuaternion!);
+
     freeFlyCamera.detach();
     freeCamActive = false;
     cursorModeActive = false;
@@ -313,10 +323,12 @@ async function main() {
     orbitCamera.resetView(tmpLocalViewDir);
     orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, dist)));
     orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
-    // Forces camera.position/rotationQuaternion to be computed immediately from the fields just
-    // set above, rather than staying at their stale pre-free-cam values for one visible frame
-    // until the next regular orbitCamera.update() call (which won't happen until next tick,
-    // since this frame already took the freeCamActive branch for camera movement).
+    orbitCamera.enterFromWorldPose(camPos, tmpCatchFromRot);
+    // Seeds camera.position/rotationQuaternion at the blend's t=0 start (exactly free cam's last
+    // pose) immediately, rather than staying at their stale pre-free-cam values for one visible
+    // frame until the next regular orbitCamera.update() call (which won't happen until next
+    // tick, since this frame already took the freeCamActive branch for camera movement) -
+    // subsequent frames' normal update() calls carry the blend the rest of the way in smoothly.
     orbitCamera.update(0);
 
     scene.activeCamera = orbitCamera.camera;
@@ -467,6 +479,16 @@ async function main() {
       solarSystem.update(dt, focusedCameraLocalPosition, sun);
     }
 
+    // HemisphericLight's own direction is fixed at construction (world +Y) while the actual sun
+    // (a DirectionalLight) rotates every frame with whatever body is focused - left unsynced,
+    // the ambient "night floor" only ever applies to the arbitrary half of a sphere facing away
+    // from world +Y, not the half actually facing away from the sun, so as a body spins the true
+    // night side drifts in and out of the adjustable floor rather than being consistently dim.
+    // HemisphericLight's direction is a REFLECTION direction (surfaces facing toward it get the
+    // bright side), while DirectionalLight's direction is the direction rays TRAVEL - negating
+    // it points at the sun's actual source direction, keeping the two consistent every frame.
+    ambient.direction.copyFrom(sun.direction).scaleInPlace(-1);
+
     if (freeCamTogglePressed) toggleFreeCam();
     freeCamTogglePressed = false;
 
@@ -485,13 +507,21 @@ async function main() {
 
       if (!transiting) {
         if (mode === "orbit") {
-          // No !orbitCamera.isFlying guard here - now that scroll zoom flows through the same
-          // flyToRadius lerp as exitToOrbitMode's cinematic fly-up, "isFlying" no longer means
-          // "just exited ground mode" on its own. groundExitCooldownRemaining (set only by
-          // exitToOrbitMode) is the actual, narrowly-targeted guard against bouncing straight
-          // back into ground mode mid fly-up; ordinary scroll-in should enter ground mode
-          // promptly the moment the interpolating radius crosses below threshold, mid-lerp or not.
-          if (focused.landable && groundExitCooldownRemaining <= 0 && orbitCamera.radius < thresholds.enterGround) {
+          if (orbitCamera.requestExitToFreeCam) {
+            // Zoomed out past maxRadius while already there - release back to free cam, the
+            // opposite end of the "swim through the system" continuum from enterGroundMode below.
+            toggleFreeCam();
+          } else if (
+            // No !orbitCamera.isFlying guard here - now that scroll zoom flows through the same
+            // flyToRadius lerp as exitToOrbitMode's cinematic fly-up, "isFlying" no longer means
+            // "just exited ground mode" on its own. groundExitCooldownRemaining (set only by
+            // exitToOrbitMode) is the actual, narrowly-targeted guard against bouncing straight
+            // back into ground mode mid fly-up; ordinary scroll-in should enter ground mode
+            // promptly the moment the interpolating radius crosses below threshold, mid-lerp or not.
+            focused.landable &&
+            groundExitCooldownRemaining <= 0 &&
+            orbitCamera.radius < thresholds.enterGround
+          ) {
             enterGroundMode();
           }
         } else if (groundCamera.requestExitToOrbit || escapePressed) {
@@ -516,6 +546,21 @@ async function main() {
     selectionUI.update();
     economyManager.update(dt, scene.activeCamera!.globalPosition);
     examineUI.update();
+
+    devStats.hidden = !graphicsSettings.developerMode;
+    if (graphicsSettings.developerMode) {
+      const camPos = scene.activeCamera!.globalPosition;
+      const distanceFromFocused = Vector3.Distance(camPos, focused.orbit.spinNode.getAbsolutePosition());
+      const cameraMode = freeCamActive ? (cursorModeActive ? "free (cursor)" : "free") : mode;
+      devStats.textContent =
+        `FPS: ${engine.getFps().toFixed(0)}\n` +
+        `Mode: ${cameraMode}\n` +
+        `Focused: ${focused.def.name}\n` +
+        `Dist from focused: ${distanceFromFocused.toFixed(0)}\n` +
+        `Orbit radius: ${mode === "orbit" ? orbitCamera.radius.toFixed(0) : "-"}\n` +
+        `Ground eye height: ${mode === "ground" ? groundCamera.eyeHeight.toFixed(0) : "-"}\n` +
+        `Ships: ${economyManager.getExamineInfo().filter((e) => e.kind === "Ship").length}`;
+    }
 
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);

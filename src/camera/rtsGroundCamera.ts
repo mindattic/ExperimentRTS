@@ -5,12 +5,18 @@ import { computeLookRotationToRef } from "./lookRotation";
 
 const PAN_SPEED = 220; // units/sec at planet-surface scale
 const MIN_EYE_HEIGHT = 30;
-// Also the starting altitude on every fresh entry into ground mode (see attach()) - doubled
-// per "RTS view needs to start at twice the altitude". The existing ENTRY_BLEND_SECONDS
-// lerp/slerp from the orbit camera's last pose already carries this through smoothly; it
-// isn't a separate thing to build, just a consequence of raising this constant.
-const MAX_EYE_HEIGHT = 320;
-const ZOOM_SPEED = 90; // eye-height units per wheel notch
+// Also the starting altitude on every fresh entry into ground mode (see attach()). The existing
+// ENTRY_BLEND_SECONDS lerp/slerp from the orbit camera's last pose already carries this through
+// smoothly; it isn't a separate thing to build, just a consequence of raising this constant.
+// Raised 7.5x (320 -> 2400) per "RTS view needs to transition much further out and allow more
+// zooming" - orbit's own enterGround/exitOrbit thresholds (main.ts) were raised to match, so
+// ground mode now both starts and can zoom out much farther before handing back to orbit.
+const MAX_EYE_HEIGHT = 2400;
+/** Multiplicative zoom step, same idea (and magnitude) as OrbitTrackballCamera's
+ * ZOOM_STEP_FRACTION - replaces the old fixed-unit ZOOM_SPEED so the same scroll notch covers a
+ * sensible fraction of whatever the current height is, rather than a fixed absolute amount that
+ * would feel glacial at the new, much larger MAX_EYE_HEIGHT and too coarse down near MIN_EYE_HEIGHT. */
+const ZOOM_STEP_FRACTION = 0.12;
 /** Exponential blend rate for zoom - same idea as OrbitTrackballCamera's RADIUS_LERP_RATE, just
  * a bit snappier since ground mode's eye-height range is much smaller/finer-grained. */
 const EYE_HEIGHT_LERP_RATE = 6.0;
@@ -191,12 +197,16 @@ export class RtsGroundCamera {
    * panning that the fixed-reference approach breaks down for (see the `east`/`north` doc). */
   setAnchorFromWorldPoint(worldPoint: Vector3): void {
     this.anchor.copyFrom(worldPoint).normalize();
-    Vector3.CrossToRef(Vector3.Up(), this.anchor, this.east);
+    // Order verified empirically against the actual rendered camera (see the east/west note on
+    // transportBasis below) - cross(anchor, Up) here (not cross(Up, anchor)) is what lines up
+    // with the camera's real on-screen right, and north's own cross-product order is flipped
+    // to match so it stays aligned with on-screen forward, which was already correct.
+    Vector3.CrossToRef(this.anchor, Vector3.Up(), this.east);
     if (this.east.lengthSquared() < 1e-6) {
-      Vector3.CrossToRef(Vector3.Forward(), this.anchor, this.east);
+      Vector3.CrossToRef(this.anchor, Vector3.Forward(), this.east);
     }
     this.east.normalize();
-    Vector3.CrossToRef(this.anchor, this.east, this.north);
+    Vector3.CrossToRef(this.east, this.anchor, this.north);
     this.north.normalize();
   }
 
@@ -261,9 +271,10 @@ export class RtsGroundCamera {
 
   private onWheel(e: WheelEvent): void {
     // Same "compound onto the in-flight target, not the still-catching-up current value"
-    // approach as OrbitTrackballCamera.onWheel.
+    // approach as OrbitTrackballCamera.onWheel, and the same multiplicative step too.
     const base = this.targetEyeHeight ?? this.eyeHeight;
-    const next = base + Math.sign(e.deltaY) * ZOOM_SPEED;
+    const factor = 1 + Math.sign(e.deltaY) * ZOOM_STEP_FRACTION;
+    const next = base * factor;
     if (next > MAX_EYE_HEIGHT && base >= MAX_EYE_HEIGHT) {
       this.requestExitToOrbit = true;
       return;

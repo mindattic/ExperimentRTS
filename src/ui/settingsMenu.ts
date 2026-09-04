@@ -15,6 +15,7 @@ export class SettingsMenu {
   private readonly keybindList = document.getElementById("keybindList") as HTMLElement;
   private readonly resetBindingsButton = document.getElementById("resetBindingsButton") as HTMLButtonElement;
   private readonly invertSelectionAreaCheckbox = document.getElementById("invertSelectionAreaCheckbox") as HTMLInputElement;
+  private readonly developerModeCheckbox = document.getElementById("developerModeCheckbox") as HTMLInputElement;
 
   private listeningAction: Action | null = null;
 
@@ -66,6 +67,11 @@ export class SettingsMenu {
     this.invertSelectionAreaCheckbox.checked = graphicsSettings.invertSelectionAreaResize;
     this.invertSelectionAreaCheckbox.addEventListener("change", () => {
       graphicsSettings.setInvertSelectionAreaResize(this.invertSelectionAreaCheckbox.checked);
+    });
+
+    this.developerModeCheckbox.checked = graphicsSettings.developerMode;
+    this.developerModeCheckbox.addEventListener("change", () => {
+      graphicsSettings.setDeveloperMode(this.developerModeCheckbox.checked);
     });
 
     window.addEventListener("keydown", (e) => this.onGlobalKeyDown(e));
