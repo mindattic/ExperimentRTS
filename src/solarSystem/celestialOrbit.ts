@@ -138,4 +138,16 @@ export class CelestialOrbit {
     this.orbitNode.getAbsolutePosition().subtractToRef(starWorldPosition, out);
     out.normalize();
   }
+
+  /** Local-to-focus position (same frame as positionAt()/orbitNode.position) this body will
+   * occupy `secondsFromNow` from now - evaluated directly from the exact analytic ellipse
+   * rather than the cached per-frame sample table (sampledPositionToRef), since this is a
+   * one-off prediction call (ship departure planning - see economy/shipTransit.ts), not a
+   * per-frame lookup, so recomputing the trig fresh here avoids the table's quantization.
+   * Composition across a hierarchy (e.g. a station orbiting a planet) is the CALLER's job -
+   * this method only ever knows about its own ellipse, exactly like today. */
+  predictLocalPositionAt(secondsFromNow: number, out: Vector3): void {
+    const theta = this.orbitAngle + secondsFromNow * ((2 * Math.PI) / this.orbitPeriodSeconds);
+    out.copyFrom(this.positionAt(theta));
+  }
 }
