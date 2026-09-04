@@ -107,13 +107,8 @@ export class SelectionUI {
 
     if (this.isFreeCamActive()) {
       // Pointer Lock hides the cursor and freezes clientX/clientY at wherever the lock engaged,
-      // so a screen-coordinate pick is meaningless here - raycast straight down the crosshair
-      // (camera forward) instead, same idea as an FPS reticle.
-      const ray = this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE);
-      const pick = this.scene.pickWithRay(ray);
-      if (!pick?.hit || !pick.pickedMesh) return;
-      const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
-      if (index !== null) this.setTarget(index);
+      // so a screen-coordinate pick is meaningless here - raycast via the reticle instead.
+      this.selectWithReticle();
       return;
     }
 
@@ -122,6 +117,17 @@ export class SelectionUI {
     if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD_PX) return; // was a drag, not a click
 
     const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+    if (!pick?.hit || !pick.pickedMesh) return;
+    const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
+    if (index !== null) this.setTarget(index);
+  }
+
+  /** Raycasts straight down the free-cam crosshair (camera forward) and selects whatever body
+   * it hits - same idea as an FPS reticle. Used both by left-click and the selectTarget
+   * keybinding (Space by default) while free cam is active. */
+  selectWithReticle(): void {
+    const ray = this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE);
+    const pick = this.scene.pickWithRay(ray);
     if (!pick?.hit || !pick.pickedMesh) return;
     const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
     if (index !== null) this.setTarget(index);

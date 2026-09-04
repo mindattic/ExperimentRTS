@@ -13,6 +13,7 @@ export type Action =
   | "freeCam"
   | "lockPlane"
   | "focusMenu"
+  | "selectTarget"
   | "travel"
   | "exitGround";
 
@@ -31,6 +32,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   freeCam: "Toggle free cam",
   lockPlane: "Lock orbit to solar plane",
   focusMenu: "Open focus list",
+  selectTarget: "Select target",
   travel: "Plot course (travel)",
   exitGround: "Exit ground mode",
 };
@@ -50,6 +52,7 @@ const DEFAULTS: Record<Action, string> = {
   freeCam: "KeyF",
   lockPlane: "KeyP",
   focusMenu: "Digit1",
+  selectTarget: "Space",
   travel: "Tab",
   exitGround: "Escape",
 };

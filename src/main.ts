@@ -123,6 +123,12 @@ async function main() {
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
     if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
+    if (e.code === keybindings.get("selectTarget") && freeCamActive) {
+      // Keyboard alternative to left-click for the free-cam reticle - clicking under Pointer
+      // Lock works too, but a dedicated key is easier to hit without disturbing mouselook.
+      e.preventDefault();
+      selectionUI.selectWithReticle();
+    }
   });
 
   function enterGroundMode() {

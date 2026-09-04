@@ -5,7 +5,11 @@ import { computeLookRotationToRef } from "./lookRotation";
 
 const PAN_SPEED = 220; // units/sec at planet-surface scale
 const MIN_EYE_HEIGHT = 30;
-const MAX_EYE_HEIGHT = 160;
+// Also the starting altitude on every fresh entry into ground mode (see attach()) - doubled
+// per "RTS view needs to start at twice the altitude". The existing ENTRY_BLEND_SECONDS
+// lerp/slerp from the orbit camera's last pose already carries this through smoothly; it
+// isn't a separate thing to build, just a consequence of raising this constant.
+const MAX_EYE_HEIGHT = 320;
 const ZOOM_SPEED = 90; // eye-height units per wheel notch
 const PITCH_DEG = 55;
 const HEADING_ROTATE_SPEED = 1.2; // rad/s while a rotate key is held
@@ -71,6 +75,16 @@ export class RtsGroundCamera {
    * with the groundRotateLeft/Right keys (Q/E by default) - rotates both the view and the
    * pan directions together. */
   private heading = 0;
+  /** Base (heading-free) tangent-frame basis at the anchor - parallel-transported frame to
+   * frame as the anchor moves (see transportBasis()), NOT recomputed fresh from a fixed
+   * global "up" reference every frame. A sphere has no continuous, singularity-free tangent
+   * frame derivable from a single global pole (hairy ball theorem) - cross(Vector3.Up(),
+   * anchor) degenerates to zero right at that pole and flips direction near it, which is
+   * exactly what made panning break down there. Parallel transport has no such singularity
+   * anywhere on the sphere, at the cost of accumulating a small twist after a full loop around
+   * a pole - acceptable here since nothing in this procedural terrain cares about true north. */
+  private east = new Vector3(1, 0, 0);
+  private north = new Vector3(0, 0, 1);
   /** Free-look yaw/pitch, right-drag - layered on top of the fixed framing look direction
    * without affecting it, so WASD/arrow panning always stays relative to the same ground
    * frame regardless of which way the player is currently looking. */
@@ -163,9 +177,19 @@ export class RtsGroundCamera {
     this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
   }
 
-  /** Anchors the camera to the nearest point on the sphere to `worldPoint`. */
+  /** Anchors the camera to the nearest point on the sphere to `worldPoint`, and (re)establishes
+   * a fresh tangent-frame basis there - safe to derive from a fixed global reference here since
+   * it's a one-off jump to an unrelated point (e.g. the orbit-mode handoff), not the continuous
+   * panning that the fixed-reference approach breaks down for (see the `east`/`north` doc). */
   setAnchorFromWorldPoint(worldPoint: Vector3): void {
     this.anchor.copyFrom(worldPoint).normalize();
+    Vector3.CrossToRef(Vector3.Up(), this.anchor, this.east);
+    if (this.east.lengthSquared() < 1e-6) {
+      Vector3.CrossToRef(Vector3.Forward(), this.anchor, this.east);
+    }
+    this.east.normalize();
+    Vector3.CrossToRef(this.anchor, this.east, this.north);
+    this.north.normalize();
   }
 
   /** Switches which body's heightfield ground mode samples - used when focus changes to a different landable body. */
@@ -236,19 +260,12 @@ export class RtsGroundCamera {
     this.eyeHeight = Math.min(MAX_EYE_HEIGHT, Math.max(MIN_EYE_HEIGHT, next));
   }
 
-  private localBasis(east: Vector3, north: Vector3): void {
-    // Cross order here is chosen so `east` matches the camera's actual screen-right (verified
-    // empirically against the rendered view, not derived analytically) - swapping it flips
-    // ArrowLeft/ArrowRight and A/D. Flipped again per live feedback that A/D still felt
-    // backwards after the Q/E heading-rotation feature was added.
-    Vector3.CrossToRef(Vector3.Up(), this.anchor, east);
-    if (east.lengthSquared() < 1e-6) {
-      Vector3.CrossToRef(Vector3.Forward(), this.anchor, east);
-    }
-    east.normalize();
-    Vector3.CrossToRef(this.anchor, east, north);
-    north.normalize();
-
+  /** Copies out the current working east/north (the persistent, parallel-transported base
+   * frame with the player's heading offset applied on top) - call fresh each time either is
+   * needed, since `heading` can change independently of the base frame. */
+  private applyHeading(east: Vector3, north: Vector3): void {
+    east.copyFrom(this.east);
+    north.copyFrom(this.north);
     if (this.heading !== 0) {
       Quaternion.RotationAxisToRef(this.anchor, this.heading, tmpHeadingQuat);
       Matrix.FromQuaternionToRef(tmpHeadingQuat, tmpHeadingMatrix);
@@ -257,6 +274,19 @@ export class RtsGroundCamera {
       east.copyFrom(tmpRotatedEast);
       north.copyFrom(tmpRotatedNorth);
     }
+  }
+
+  /** Carries the persistent base frame along by the same rotation that just moved the anchor
+   * (parallel transport), then re-orthonormalizes against the anchor's new position to correct
+   * numerical drift - this is what replaces recomputing east/north from a fixed global "up"
+   * reference every frame, and is the part with no pole singularity. */
+  private transportBasis(rotationMatrix: Matrix): void {
+    Vector3.TransformCoordinatesToRef(this.east, rotationMatrix, this.east);
+    const eastDotAnchor = Vector3.Dot(this.east, this.anchor);
+    this.east.subtractInPlace(this.anchor.scale(eastDotAnchor));
+    this.east.normalize();
+    Vector3.CrossToRef(this.anchor, this.east, this.north);
+    this.north.normalize();
   }
 
   update(deltaSeconds: number, planetRadius: number): void {
@@ -279,7 +309,7 @@ export class RtsGroundCamera {
       }
     }
 
-    this.localBasis(tmpEast, tmpNorth);
+    this.applyHeading(tmpEast, tmpNorth);
 
     tmpMove.setAll(0);
     if (this.keys.has("ArrowUp") || this.keys.has(keybindings.get("groundForward"))) tmpMove.addInPlace(tmpNorth);
@@ -297,7 +327,8 @@ export class RtsGroundCamera {
       Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
       Vector3.TransformCoordinatesToRef(this.anchor, tmpMatrix, this.anchor);
       this.anchor.normalize();
-      this.localBasis(tmpEast, tmpNorth);
+      this.transportBasis(tmpMatrix);
+      this.applyHeading(tmpEast, tmpNorth);
     }
 
     if (this.pendingPanEast !== 0 || this.pendingPanNorth !== 0) {
@@ -312,7 +343,8 @@ export class RtsGroundCamera {
         Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
         Vector3.TransformCoordinatesToRef(this.anchor, tmpMatrix, this.anchor);
         this.anchor.normalize();
-        this.localBasis(tmpEast, tmpNorth);
+        this.transportBasis(tmpMatrix);
+        this.applyHeading(tmpEast, tmpNorth);
       }
       this.pendingPanEast = 0;
       this.pendingPanNorth = 0;

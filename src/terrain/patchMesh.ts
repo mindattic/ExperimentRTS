@@ -144,9 +144,25 @@ export function buildPatchMesh(
 
   cubeToSphereUnit(face, u0 + size / 2, v0 + size / 2, scratch);
   const center = scratch.scale(planetRadius);
-  cubeToSphereUnit(face, u0, v0, scratch);
-  const corner = scratch.scale(planetRadius);
-  const boundingRadius = Vector3.Distance(center, corner);
+
+  // The cube-to-sphere projection isn't uniform - patches nearer a cube corner (which can land
+  // near a pole, depending on the cube's orientation) are increasingly distorted, so opposite
+  // corners of the same patch can end up at noticeably different distances from its center.
+  // Using just one corner underestimated boundingRadius there, destabilizing the quadtree's
+  // split/merge distance checks (PlanetTerrain.visit) right at that boundary - the patch would
+  // flicker between LOD levels as the camera moved even slightly. Taking the farthest of all 4
+  // corners gives an actual enclosing bound regardless of distortion.
+  let boundingRadius = 0;
+  for (const [cu, cv] of [
+    [u0, v0],
+    [u0 + size, v0],
+    [u0, v0 + size],
+    [u0 + size, v0 + size],
+  ]) {
+    cubeToSphereUnit(face, cu, cv, scratch);
+    scratch.scaleInPlace(planetRadius);
+    boundingRadius = Math.max(boundingRadius, Vector3.Distance(center, scratch));
+  }
 
   return { vertexData, center, boundingRadius };
 }
