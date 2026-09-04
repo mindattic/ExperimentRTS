@@ -26,6 +26,9 @@ export const MAX_NIGHT_BRIGHTNESS = 0.3;
 class GraphicsSettings {
   presetIndex = DEFAULT_PRESET_INDEX;
   nightBrightness = DEFAULT_NIGHT_BRIGHTNESS;
+  /** Selection-area drag direction (see SelectionAreaUI): normally up/right grows, left/down
+   * shrinks - flipped when this is true. */
+  invertSelectionAreaResize = false;
 
   constructor() {
     this.load();
@@ -45,13 +48,19 @@ class GraphicsSettings {
     this.save();
   }
 
+  setInvertSelectionAreaResize(value: boolean): void {
+    this.invertSelectionAreaResize = value;
+    this.save();
+  }
+
   private load(): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const data = JSON.parse(raw) as { presetIndex?: number; nightBrightness?: number };
+        const data = JSON.parse(raw) as { presetIndex?: number; nightBrightness?: number; invertSelectionAreaResize?: boolean };
         if (typeof data.presetIndex === "number") this.presetIndex = data.presetIndex;
         if (typeof data.nightBrightness === "number") this.nightBrightness = data.nightBrightness;
+        if (typeof data.invertSelectionAreaResize === "boolean") this.invertSelectionAreaResize = data.invertSelectionAreaResize;
       }
     } catch {
       // localStorage unavailable or corrupted - fall back to default silently.
@@ -60,7 +69,14 @@ class GraphicsSettings {
 
   private save(): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ presetIndex: this.presetIndex, nightBrightness: this.nightBrightness }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          presetIndex: this.presetIndex,
+          nightBrightness: this.nightBrightness,
+          invertSelectionAreaResize: this.invertSelectionAreaResize,
+        }),
+      );
     } catch {
       // Best-effort persistence only.
     }

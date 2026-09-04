@@ -22,6 +22,7 @@ import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor } fro
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI } from "./ui/selection";
+import { SelectionAreaUI } from "./ui/selectionArea";
 import { SettingsMenu } from "./ui/settingsMenu";
 import { keybindings } from "./input/keybindings";
 import { graphicsSettings } from "./settings/graphicsSettings";
@@ -137,6 +138,7 @@ async function main() {
   let lockPlaneTogglePressed = false;
 
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
+  new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
 
   const settingsMenu = new SettingsMenu(
     () => {

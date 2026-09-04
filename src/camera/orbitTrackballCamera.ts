@@ -162,6 +162,15 @@ export class OrbitTrackballCamera {
     return this.planeLocked;
   }
 
+  /** Cancels an in-progress drag retroactively - used by SelectionAreaUI, which shares the
+   * same pointerdown/pointermove events: it can't know until its own pick resolves (a frame or
+   * so of pointer movement later) whether this gesture is actually a click-drag on a landable
+   * body's surface (draw a selection circle) rather than a drag on empty space (orbit the
+   * camera), by which point this class has already started rotating. */
+  cancelDrag(): void {
+    this.dragging = false;
+  }
+
   private onPointerDown(e: PointerEvent): void {
     if (e.button !== 0) return;
     this.dragging = true;

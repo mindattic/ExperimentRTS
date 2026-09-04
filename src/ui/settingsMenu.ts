@@ -14,6 +14,7 @@ export class SettingsMenu {
   private readonly nightBrightnessSlider = document.getElementById("nightBrightnessSlider") as HTMLInputElement;
   private readonly keybindList = document.getElementById("keybindList") as HTMLElement;
   private readonly resetBindingsButton = document.getElementById("resetBindingsButton") as HTMLButtonElement;
+  private readonly invertSelectionAreaCheckbox = document.getElementById("invertSelectionAreaCheckbox") as HTMLInputElement;
 
   private listeningAction: Action | null = null;
 
@@ -60,6 +61,11 @@ export class SettingsMenu {
     this.resetBindingsButton.addEventListener("click", () => {
       keybindings.resetDefaults();
       this.populateKeybindList();
+    });
+
+    this.invertSelectionAreaCheckbox.checked = graphicsSettings.invertSelectionAreaResize;
+    this.invertSelectionAreaCheckbox.addEventListener("change", () => {
+      graphicsSettings.setInvertSelectionAreaResize(this.invertSelectionAreaCheckbox.checked);
     });
 
     window.addEventListener("keydown", (e) => this.onGlobalKeyDown(e));
