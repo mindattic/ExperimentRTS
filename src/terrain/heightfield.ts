@@ -19,7 +19,7 @@ const BIOME_BLEND_SPAN = 0.18;
  * so even the most extreme terrain a preset can produce rounds off into a peak/pit instead of
  * a razor-sharp spike - a hard clamp would instead flatten extremes into an unnatural plateau.
  */
-const ELEVATION_CAP = 32;
+const ELEVATION_CAP = 65;
 
 /** Procedural, seeded elevation field for the whole planet, sampled directly on the unit sphere (seamless across cube-sphere faces). */
 export class PlanetHeightfield {
@@ -27,7 +27,7 @@ export class PlanetHeightfield {
   private readonly seeds: BiomeSeed[] = [];
 
   constructor(seed: number) {
-    this.fbm = new Fbm3(seed, 4, 2.0, 0.45);
+    this.fbm = new Fbm3(seed, 5, 2.05, 0.48);
 
     const rand = mulberry32(seed ^ 0x9e3779b9);
     for (let i = 0; i < BIOME_SEED_COUNT; i++) {

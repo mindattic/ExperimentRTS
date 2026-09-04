@@ -6,6 +6,7 @@ const MIN_SETTLE_VELOCITY = 0.05; // rad/s - below this, inertia is considered s
 const RELEVEL_RATE = 3.0; // exponential blend rate for auto re-leveling roll once settled
 const ZOOM_STEP_FRACTION = 0.12; // fraction of current radius per wheel notch
 const RADIUS_LERP_RATE = 4.0; // exponential blend rate for programmatic radius changes (e.g. exit-to-orbit)
+const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
 
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
@@ -38,11 +39,14 @@ export class OrbitTrackballCamera {
   /** True only while an explicit reorient() is actively blending roll back to level. */
   private reorienting = false;
 
+  private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
   private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
   private pointerMoveHandler = (e: PointerEvent) => this.onPointerMove(e);
   private pointerUpHandler = () => this.onPointerUp();
   private wheelHandler = (e: WheelEvent) => this.onWheel(e);
+  private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
+  private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
 
   constructor(scene: Scene, canvas: HTMLCanvasElement, radius: number, minRadius: number, maxRadius: number, farClip: number) {
     this.canvas = canvas;
@@ -64,14 +68,19 @@ export class OrbitTrackballCamera {
     window.addEventListener("pointermove", this.pointerMoveHandler);
     window.addEventListener("pointerup", this.pointerUpHandler);
     this.canvas.addEventListener("wheel", this.wheelHandler, { passive: true });
+    window.addEventListener("keydown", this.keydownHandler);
+    window.addEventListener("keyup", this.keyupHandler);
   }
 
   detach(): void {
     this.dragging = false;
+    this.keys.clear();
     this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
     window.removeEventListener("pointermove", this.pointerMoveHandler);
     window.removeEventListener("pointerup", this.pointerUpHandler);
     this.canvas.removeEventListener("wheel", this.wheelHandler);
+    window.removeEventListener("keydown", this.keydownHandler);
+    window.removeEventListener("keyup", this.keyupHandler);
   }
 
   /** Points the camera at `worldPoint` (nearest direction on the sphere), used when handing off from ground mode. */
@@ -163,6 +172,17 @@ export class OrbitTrackballCamera {
   }
 
   update(deltaSeconds: number): void {
+    let keyYaw = 0;
+    let keyPitch = 0;
+    if (this.keys.has("KeyD")) keyYaw += 1;
+    if (this.keys.has("KeyA")) keyYaw -= 1;
+    if (this.keys.has("KeyW")) keyPitch += 1;
+    if (this.keys.has("KeyS")) keyPitch -= 1;
+    if (keyYaw !== 0 || keyPitch !== 0) {
+      this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
+      this.reorienting = false;
+    }
+
     if (!this.dragging) {
       const speed = Math.hypot(this.velYaw, this.velPitch);
       if (speed > MIN_SETTLE_VELOCITY) {

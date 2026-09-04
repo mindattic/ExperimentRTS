@@ -11,49 +11,49 @@ export interface TopologyPreset {
 
 const plains: TopologyPreset = {
   name: "plains",
-  amplitudeMeters: 6,
+  amplitudeMeters: 8,
   height01(x, y, z, fbm) {
-    return fbm.sample(x, y, z, 4) * 0.5 + 0.5;
+    return fbm.sample(x, y, z, 5) * 0.5 + 0.5;
   },
 };
 
 const dunes: TopologyPreset = {
   name: "dunes",
-  amplitudeMeters: 16,
+  amplitudeMeters: 22,
   height01(x, y, z, fbm) {
-    const [wx, wy, wz] = domainWarp(fbm, x, y, z, 2, 0.15);
-    const ridge = Math.abs(Math.sin((wx + wy + wz) * 6 + fbm.sample(x, y, z, 3) * 2));
-    const detail = fbm.sample(x, y, z, 18) * 0.12;
-    return clamp01(ridge * 0.7 + detail + 0.15);
+    const [wx, wy, wz] = domainWarp(fbm, x, y, z, 2.5, 0.15);
+    const ridge = Math.abs(Math.sin((wx + wy + wz) * 8 + fbm.sample(x, y, z, 3.5) * 2.5));
+    const detail = fbm.sample(x, y, z, 22) * 0.14;
+    return clamp01(ridge * 0.78 + detail + 0.1);
   },
 };
 
 const mesas: TopologyPreset = {
   name: "mesas",
-  amplitudeMeters: 35,
+  amplitudeMeters: 62,
   height01(x, y, z, fbm) {
-    const base = fbm.sample(x, y, z, 2) * 0.5 + 0.5;
+    const base = fbm.sample(x, y, z, 2.6) * 0.5 + 0.5;
     const levels = 5;
     const terraced = Math.floor(base * levels) / (levels - 1);
-    return clamp01(terraced * 0.7 + base * 0.3);
+    return clamp01(terraced * 0.82 + base * 0.18);
   },
 };
 
 const canyons: TopologyPreset = {
   name: "canyons",
-  amplitudeMeters: 42,
+  amplitudeMeters: 80,
   height01(x, y, z, fbm) {
-    const carved = 1 - fbm.sampleRidged(x, y, z, 2);
-    const base = fbm.sample(x, y, z, 1.4) * 0.35 + 0.5;
-    return clamp01(base * 0.5 + carved * 0.5);
+    const carved = 1 - fbm.sampleRidged(x, y, z, 2.6);
+    const base = fbm.sample(x, y, z, 1.8) * 0.32 + 0.5;
+    return clamp01(base * 0.42 + carved * 0.58);
   },
 };
 
 const craterBasins: TopologyPreset = {
   name: "craterBasins",
-  amplitudeMeters: 30,
+  amplitudeMeters: 48,
   height01(x, y, z, fbm) {
-    const freq = 1.6;
+    const freq = 2.0;
     const px = x * freq;
     const py = y * freq;
     const pz = z * freq;
@@ -84,24 +84,24 @@ const craterBasins: TopologyPreset = {
       }
     }
 
-    const craterRadius = 0.4 + bestJitter * 0.3;
+    const craterRadius = 0.38 + bestJitter * 0.3;
     const t = clamp01(bestDist / craterRadius);
-    const rim = Math.exp(-(((t - 0.85) / 0.16) ** 2)) * 0.14;
-    const bowl = 0.5 - (1 - t) * 0.3 + rim;
-    const base = fbm.sample(x, y, z, 3) * 0.5 + 0.5;
-    return clamp01(bowl * 0.8 + base * 0.2);
+    const rim = Math.exp(-(((t - 0.85) / 0.14) ** 2)) * 0.16;
+    const bowl = 0.5 - (1 - t) * 0.36 + rim;
+    const base = fbm.sample(x, y, z, 3.5) * 0.5 + 0.5;
+    return clamp01(bowl * 0.83 + base * 0.17);
   },
 };
 
 const badlands: TopologyPreset = {
   name: "badlands",
-  amplitudeMeters: 30,
+  amplitudeMeters: 52,
   height01(x, y, z, fbm) {
-    const [wx, wy, wz] = domainWarp(fbm, x, y, z, 2.5, 0.2);
-    const ridged = fbm.sampleRidged(wx, wy, wz, 4.5);
-    const fine = fbm.sample(x, y, z, 20) * 0.12;
-    const base = fbm.sample(x, y, z, 1.8) * 0.5 + 0.5;
-    return clamp01(ridged * 0.6 + base * 0.28 + fine + 0.06);
+    const [wx, wy, wz] = domainWarp(fbm, x, y, z, 3.2, 0.22);
+    const ridged = fbm.sampleRidged(wx, wy, wz, 6.5);
+    const fine = fbm.sample(x, y, z, 24) * 0.13;
+    const base = fbm.sample(x, y, z, 2) * 0.5 + 0.5;
+    return clamp01(ridged * 0.78 + base * 0.15 + fine + 0.05);
   },
 };
 

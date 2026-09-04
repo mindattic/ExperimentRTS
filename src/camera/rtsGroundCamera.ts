@@ -8,6 +8,9 @@ const ZOOM_SPEED = 90; // eye-height units per wheel notch
 const PITCH_DEG = 55;
 /** How long the entry blend from the orbit camera's last position runs. */
 const ENTRY_BLEND_SECONDS = 0.35;
+/** Ground-plane units of pan per pixel of drag, per unit of eyeHeight (so drag feels
+ * proportionally "grabbier" when zoomed further out, like dragging a map). */
+const DRAG_PAN_SENSITIVITY = 0.012;
 
 const tmpMatrix = new Matrix();
 const tmpQuat = new Quaternion();
@@ -18,6 +21,7 @@ const tmpTargetPos = new Vector3();
 const tmpLookDir = new Vector3();
 const tmpForward = new Vector3();
 const tmpTargetRot = new Quaternion();
+const tmpPanAxis = new Vector3();
 
 function easeOutCubic(t: number): number {
   const u = 1 - t;
@@ -42,6 +46,16 @@ export class RtsGroundCamera {
   private wheelHandler = (e: WheelEvent) => this.onWheel(e);
   private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
+  private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
+  private pointerMoveHandler = (e: PointerEvent) => this.onPointerMove(e);
+  private pointerUpHandler = () => {
+    this.dragging = false;
+  };
+  private dragging = false;
+  private lastPointerX = 0;
+  private lastPointerY = 0;
+  private pendingPanEast = 0;
+  private pendingPanNorth = 0;
   /** Set to true for one frame when the player zooms out past the max eye height. */
   requestExitToOrbit = false;
 
@@ -81,18 +95,46 @@ export class RtsGroundCamera {
     window.addEventListener("keydown", this.keydownHandler);
     window.addEventListener("keyup", this.keyupHandler);
     this.canvas.addEventListener("wheel", this.wheelHandler, { passive: true });
+    this.canvas.addEventListener("pointerdown", this.pointerDownHandler);
+    window.addEventListener("pointermove", this.pointerMoveHandler);
+    window.addEventListener("pointerup", this.pointerUpHandler);
   }
 
   detach(): void {
     this.keys.clear();
+    this.dragging = false;
     window.removeEventListener("keydown", this.keydownHandler);
     window.removeEventListener("keyup", this.keyupHandler);
     this.canvas.removeEventListener("wheel", this.wheelHandler);
+    this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
+    window.removeEventListener("pointermove", this.pointerMoveHandler);
+    window.removeEventListener("pointerup", this.pointerUpHandler);
   }
 
   /** Anchors the camera to the nearest point on the sphere to `worldPoint`. */
   setAnchorFromWorldPoint(worldPoint: Vector3): void {
     this.anchor.copyFrom(worldPoint).normalize();
+  }
+
+  private onPointerDown(e: PointerEvent): void {
+    if (e.button !== 0) return;
+    this.dragging = true;
+    this.lastPointerX = e.clientX;
+    this.lastPointerY = e.clientY;
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (!this.dragging) return;
+    const dx = e.clientX - this.lastPointerX;
+    const dy = e.clientY - this.lastPointerY;
+    this.lastPointerX = e.clientX;
+    this.lastPointerY = e.clientY;
+    // Drag-the-map convention: dragging left pans the view the way ArrowRight does (as if
+    // grabbing the ground and pulling it under the cursor), scaled by eyeHeight so it stays
+    // proportionally grabby whether zoomed in close or pulled back.
+    const scale = DRAG_PAN_SENSITIVITY * this.eyeHeight;
+    this.pendingPanEast += -dx * scale;
+    this.pendingPanNorth += dy * scale;
   }
 
   private onWheel(e: WheelEvent): void {
@@ -129,13 +171,32 @@ export class RtsGroundCamera {
     if (tmpMove.lengthSquared() > 0) {
       tmpMove.normalize();
       const distance = PAN_SPEED * deltaSeconds;
-      const axis = Vector3.Cross(this.anchor, tmpMove).normalize();
+      Vector3.CrossToRef(this.anchor, tmpMove, tmpPanAxis);
+      tmpPanAxis.normalize();
       const angle = distance / planetRadius;
-      Quaternion.RotationAxisToRef(axis, angle, tmpQuat);
+      Quaternion.RotationAxisToRef(tmpPanAxis, angle, tmpQuat);
       Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
       Vector3.TransformCoordinatesToRef(this.anchor, tmpMatrix, this.anchor);
       this.anchor.normalize();
       this.localBasis(tmpEast, tmpNorth);
+    }
+
+    if (this.pendingPanEast !== 0 || this.pendingPanNorth !== 0) {
+      tmpMove.copyFrom(tmpEast).scaleInPlace(this.pendingPanEast).addInPlace(tmpNorth.scale(this.pendingPanNorth));
+      const dragDistance = tmpMove.length();
+      if (dragDistance > 1e-6) {
+        tmpMove.normalize();
+        Vector3.CrossToRef(this.anchor, tmpMove, tmpPanAxis);
+        tmpPanAxis.normalize();
+        const angle = dragDistance / planetRadius;
+        Quaternion.RotationAxisToRef(tmpPanAxis, angle, tmpQuat);
+        Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
+        Vector3.TransformCoordinatesToRef(this.anchor, tmpMatrix, this.anchor);
+        this.anchor.normalize();
+        this.localBasis(tmpEast, tmpNorth);
+      }
+      this.pendingPanEast = 0;
+      this.pendingPanNorth = 0;
     }
 
     const elevation = this.heightfield.elevationAt(this.anchor);
