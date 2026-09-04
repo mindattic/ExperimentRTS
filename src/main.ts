@@ -1,20 +1,10 @@
 import "./style.css";
 
-import {
-  EngineFactory,
-  type AbstractEngine,
-  Scene,
-  Vector3,
-  Color3,
-  Color4,
-  HemisphericLight,
-  DirectionalLight,
-  MeshBuilder,
-  StandardMaterial,
-} from "@babylonjs/core";
+import { EngineFactory, type AbstractEngine, Scene, Vector3, Color4, HemisphericLight, DirectionalLight } from "@babylonjs/core";
 import { GeospatialCamera } from "@babylonjs/core/Cameras/geospatialCamera";
 
-import { PLANET_RADIUS } from "./config";
+import { PLANET_RADIUS, PLANET_SEED } from "./config";
+import { PlanetTerrain } from "./terrain/planetTerrain";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 
@@ -28,14 +18,10 @@ async function main() {
   const ambient = new HemisphericLight("ambient", new Vector3(0, 1, 0), scene);
   ambient.intensity = 0.15;
 
-  const planet = MeshBuilder.CreateSphere("planet", { diameter: PLANET_RADIUS * 2, segments: 64 }, scene);
-  const planetMaterial = new StandardMaterial("planetMaterial", scene);
-  planetMaterial.diffuseColor = new Color3(0.76, 0.62, 0.42);
-  planetMaterial.specularColor = Color3.Black();
-  planet.material = planetMaterial;
+  const terrain = new PlanetTerrain(scene, PLANET_RADIUS, PLANET_SEED);
 
   const camera = new GeospatialCamera("geoCamera", scene, { planetRadius: PLANET_RADIUS });
-  camera.limits.radiusMin = PLANET_RADIUS * 1.05;
+  camera.limits.radiusMin = PLANET_RADIUS * 1.15;
   camera.limits.radiusMax = PLANET_RADIUS * 8;
   camera.radius = PLANET_RADIUS * 3.5;
   camera.pitch = 0.6;
@@ -43,6 +29,7 @@ async function main() {
   camera.attachControl(true);
 
   engine.runRenderLoop(() => {
+    terrain.update(camera.globalPosition);
     scene.render();
   });
 
