@@ -6,6 +6,7 @@ import { Ship } from "./ship";
 import type { Dockable } from "./dockable";
 import { BASE_DEFS, STATION_DEFS, SHIP_DEFS } from "./economyDefs";
 import type { ExaminableInfo } from "../ui/examineUI";
+import { graphicsSettings } from "../settings/graphicsSettings";
 
 function findBody(solarSystem: SolarSystem, name: string) {
   const body = solarSystem.bodies.find((b) => b.def.name === name);
@@ -42,6 +43,18 @@ export class EconomyManager {
     }
 
     this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0])));
+
+    this.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
+  }
+
+  /** Station orbit lines only - planet/moon orbit lines are SolarSystem's own
+   * setOrbitLinesVisible(); main.ts calls both together from the same Settings checkbox. */
+  setOrbitLinesVisible(visible: boolean): void {
+    for (const station of this.stations) station.orbitLineMesh.setEnabled(visible);
+  }
+
+  setShipTrajectoriesVisible(visible: boolean): void {
+    for (const ship of this.ships) ship.setTrajectoryVisible(visible);
   }
 
   /** @param cameraWorldPosition Used for Ship's cube<->billboard-icon LOD swap - ships are

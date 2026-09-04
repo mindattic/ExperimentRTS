@@ -684,6 +684,13 @@ async function main() {
     const b = graphicsSettings.nightBrightness;
     ambient.groundColor.set(b, b, b * 1.4);
 
+    // Cheap enough (a couple dozen meshes) to just re-apply unconditionally every frame, same
+    // pattern as nightBrightness above, rather than tracking a "did this setting just change"
+    // flag - setEnabled() with the same value it already has is a no-op either way.
+    solarSystem.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
+    economyManager.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
+    economyManager.setShipTrajectoriesVisible(graphicsSettings.showShipTrajectories);
+
     scene.render();
   });
 

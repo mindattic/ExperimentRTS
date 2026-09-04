@@ -6,6 +6,7 @@ import { createHullMaterial, createShipIconMaterial, hashSeed, HULL_FACE_UV } fr
 import { buildFlightProfile, computeFlightRotations, evaluateFlightProfile, evaluateFlightRotation, solveRendezvous, type FlightProfile } from "./shipTransit";
 import { EARTH_RADIUS } from "../solarSystem/scale";
 import type { ExaminableInfo } from "../ui/examineUI";
+import { graphicsSettings } from "../settings/graphicsSettings";
 
 type ShipPhase = "docked" | "transit";
 
@@ -50,12 +51,17 @@ export class Ship {
   private routeDirection: 1 | -1 = 1;
   private currentDestination: Dockable | null = null;
   private trajectoryLine: LinesMesh | null = null;
+  /** Desired visibility for the NEXT trajectory line created (departNext) - see
+   * setTrajectoryVisible(). Defaults to graphicsSettings.showShipTrajectories's value at
+   * construction; EconomyManager keeps every ship's flag in sync as the setting changes live. */
+  private trajectoryVisible: boolean;
   private readonly qPrograde = new Quaternion();
   private readonly qRetrograde = new Quaternion();
 
   constructor(scene: Scene, def: ShipDef, startDock: Dockable) {
     this.scene = scene;
     this.def = def;
+    this.trajectoryVisible = graphicsSettings.showShipTrajectories;
     this.routeIndex = def.startRouteIndex ?? 0;
     // Randomized so a whole roster doesn't all depart in the same frame.
     this.dwellRemaining = def.dwellSeconds * (0.3 + Math.random() * 0.7);
@@ -145,6 +151,14 @@ export class Ship {
     this.trajectoryLine.color = FACTION_PALETTES[this.def.faction].accent;
     this.trajectoryLine.alpha = 0.5;
     this.trajectoryLine.isPickable = false;
+    this.trajectoryLine.setEnabled(this.trajectoryVisible);
+  }
+
+  /** Applies immediately to the current trajectory line (if any) and is remembered for the next
+   * one departNext() creates - see EconomyManager.setShipTrajectoriesVisible. */
+  setTrajectoryVisible(visible: boolean): void {
+    this.trajectoryVisible = visible;
+    this.trajectoryLine?.setEnabled(visible);
   }
 
   /** Bounces at either end of the route rather than looping back to the start - the simplest

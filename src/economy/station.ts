@@ -1,4 +1,4 @@
-import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
+import { Color3, type LinesMesh, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
 import { mulberry32 } from "../terrain/prng";
 import { hashSeed } from "./hullTexture";
 import type { CelestialBody } from "../solarSystem/celestialBody";
@@ -52,6 +52,7 @@ export class Station implements Dockable {
   readonly orbit: CelestialOrbit;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
+  readonly orbitLineMesh: LinesMesh;
 
   constructor(scene: Scene, def: StationDef, parentBody: CelestialBody) {
     this.id = def.id;
@@ -76,7 +77,7 @@ export class Station implements Dockable {
     // Same deterministic per-entity hue idea as SolarSystem's own orbit lines, just keyed off
     // the station's id hash instead of a numeric seed.
     const hue = mulberry32(hashSeed(def.id))() * 360;
-    this.orbit.createOrbitLine(scene, `${def.id}OrbitLine`, Color3.FromHSV(hue, 0.55, 0.95), parentBody.orbit.orbitNode);
+    this.orbitLineMesh = this.orbit.createOrbitLine(scene, `${def.id}OrbitLine`, Color3.FromHSV(hue, 0.55, 0.95), parentBody.orbit.orbitNode);
 
     const outerRadius = Math.max(20, parentBody.radius * 0.05);
     this.mesh = MeshBuilder.CreateTorus(`${def.id}Mesh`, { diameter: outerRadius * 2, thickness: outerRadius * 0.28, tessellation: 24 }, scene);

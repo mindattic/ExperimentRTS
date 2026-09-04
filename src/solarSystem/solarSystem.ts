@@ -1,4 +1,5 @@
-import { Color3, DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
+import { Color3, DirectionalLight, type LinesMesh, Scene, Vector3 } from "@babylonjs/core";
+import { graphicsSettings } from "../settings/graphicsSettings";
 import { Star } from "../environment/star";
 import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
@@ -28,6 +29,7 @@ export class SolarSystem {
   readonly bodies: CelestialBody[];
   readonly belt: AsteroidBelt;
   focusedIndex: number;
+  private readonly orbitLineMeshes: LinesMesh[] = [];
 
   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
    * as close to "fixed at infinity" as the clipping range allows. */
@@ -65,7 +67,7 @@ export class SolarSystem {
         },
         heightmapImages[def.name],
       );
-      body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
+      this.orbitLineMeshes.push(body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed)));
       return body;
     });
 
@@ -88,7 +90,7 @@ export class SolarSystem {
         heightmapImages[def.name],
       );
       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
-      moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);
+      this.orbitLineMeshes.push(moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode));
       this.bodies.push(moon);
     }
 
@@ -99,10 +101,16 @@ export class SolarSystem {
     this.belt = new AsteroidBelt(scene, beltInner, beltOuter, 909);
 
     this.focusedIndex = BODY_DEFS.findIndex((b) => b.name === "Earth");
+
+    this.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
   }
 
   get focused(): CelestialBody {
     return this.bodies[this.focusedIndex];
+  }
+
+  setOrbitLinesVisible(visible: boolean): void {
+    for (const line of this.orbitLineMeshes) line.setEnabled(visible);
   }
 
   /**

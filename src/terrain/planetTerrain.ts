@@ -9,6 +9,12 @@ const MAX_DEPTH = 9;
 const SPLIT_FACTOR = 2.0;
 const MERGE_FACTOR = 2.6;
 const MAX_PATCHES_PER_FRAME = 3;
+/** Depth cap used only when graphicsSettings.forceMaxTerrainDetail is on ("what does full detail
+ * look like from far away") - deliberately much lower than MAX_DEPTH. Forcing the REAL max depth
+ * everywhere is computationally infeasible: 6 faces * 4^9 leaves each is ~1.57 million patches.
+ * At depth 6, 6*4^6 = ~24,576 patches is still a genuinely heavy preview, but is at least
+ * plausible to actually render. */
+const FORCE_DETAIL_MAX_DEPTH = 6;
 
 /**
  * Cube-sphere quadtree LOD terrain: 6 root faces, each recursively subdividing near the
@@ -97,10 +103,12 @@ export class PlanetTerrain {
 
     const distance = Vector3.Distance(cameraPosition, node.center);
 
+    const forceMaxDetail = graphicsSettings.forceMaxTerrainDetail;
+
     if (node.children) {
       const allReady = node.children.every((c) => c.mesh !== null);
       if (allReady) {
-        if (distance > node.boundingRadius * MERGE_FACTOR) {
+        if (!forceMaxDetail && distance > node.boundingRadius * MERGE_FACTOR) {
           // Merging back to the parent patch. Re-enable the parent BEFORE disposing the
           // children (rather than after, alongside them) - otherwise, for the one frame the
           // merge triggers on, the parent is already disabled from a prior frame and the
@@ -124,7 +132,9 @@ export class PlanetTerrain {
       }
     } else {
       node.mesh.setEnabled(true);
-      if (distance < node.boundingRadius * SPLIT_FACTOR && node.depth < MAX_DEPTH) {
+      const maxDepth = forceMaxDetail ? FORCE_DETAIL_MAX_DEPTH : MAX_DEPTH;
+      const shouldSplit = forceMaxDetail || distance < node.boundingRadius * SPLIT_FACTOR;
+      if (shouldSplit && node.depth < maxDepth) {
         node.children = node.createChildren();
         for (const child of node.children) {
           this.generationQueue.push(child);

@@ -12,6 +12,9 @@ export class SettingsMenu {
   private readonly settingsCloseButton = document.getElementById("settingsCloseButton") as HTMLButtonElement;
   private readonly terrainQualitySelect = document.getElementById("terrainQualitySelect") as HTMLSelectElement;
   private readonly nightBrightnessSlider = document.getElementById("nightBrightnessSlider") as HTMLInputElement;
+  private readonly showOrbitLinesCheckbox = document.getElementById("showOrbitLinesCheckbox") as HTMLInputElement;
+  private readonly showShipTrajectoriesCheckbox = document.getElementById("showShipTrajectoriesCheckbox") as HTMLInputElement;
+  private readonly forceMaxTerrainDetailCheckbox = document.getElementById("forceMaxTerrainDetailCheckbox") as HTMLInputElement;
   private readonly keybindList = document.getElementById("keybindList") as HTMLElement;
   private readonly resetBindingsButton = document.getElementById("resetBindingsButton") as HTMLButtonElement;
   private readonly invertSelectionAreaCheckbox = document.getElementById("invertSelectionAreaCheckbox") as HTMLInputElement;
@@ -72,6 +75,21 @@ export class SettingsMenu {
     this.developerModeCheckbox.checked = graphicsSettings.developerMode;
     this.developerModeCheckbox.addEventListener("change", () => {
       graphicsSettings.setDeveloperMode(this.developerModeCheckbox.checked);
+    });
+
+    this.showOrbitLinesCheckbox.checked = graphicsSettings.showOrbitLines;
+    this.showOrbitLinesCheckbox.addEventListener("change", () => {
+      graphicsSettings.setShowOrbitLines(this.showOrbitLinesCheckbox.checked);
+    });
+
+    this.showShipTrajectoriesCheckbox.checked = graphicsSettings.showShipTrajectories;
+    this.showShipTrajectoriesCheckbox.addEventListener("change", () => {
+      graphicsSettings.setShowShipTrajectories(this.showShipTrajectoriesCheckbox.checked);
+    });
+
+    this.forceMaxTerrainDetailCheckbox.checked = graphicsSettings.forceMaxTerrainDetail;
+    this.forceMaxTerrainDetailCheckbox.addEventListener("change", () => {
+      graphicsSettings.setForceMaxTerrainDetail(this.forceMaxTerrainDetailCheckbox.checked);
     });
 
     window.addEventListener("keydown", (e) => this.onGlobalKeyDown(e));

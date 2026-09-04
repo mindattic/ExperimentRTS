@@ -33,6 +33,17 @@ class GraphicsSettings {
   /** Shows the bottom-left developer stats overlay (main.ts) - distance from the focused body,
    * FPS, current mode, etc. On by default for this project's dev-focused current stage. */
   developerMode = DEFAULT_DEVELOPER_MODE;
+  /** Off by default per explicit request - the colored orbit-line loops (planets, moons,
+   * stations) clutter the view once there are many of them on screen at once. */
+  showOrbitLines = false;
+  /** Off by default per explicit request - same declutter reasoning as showOrbitLines. */
+  showShipTrajectories = false;
+  /** Debug/preview toggle: always splits terrain to a fixed depth regardless of camera distance
+   * (see planetTerrain.ts), instead of the normal distance-based LOD - "what does full terrain
+   * detail look like from far away." Off by default; genuinely heavy when on (that same fixed
+   * depth is deliberately capped well below MAX_DEPTH - see FORCE_DETAIL_MAX_DEPTH's own comment
+   * for why forcing the real max depth everywhere is computationally infeasible). */
+  forceMaxTerrainDetail = false;
 
   constructor() {
     this.load();
@@ -62,6 +73,21 @@ class GraphicsSettings {
     this.save();
   }
 
+  setShowOrbitLines(value: boolean): void {
+    this.showOrbitLines = value;
+    this.save();
+  }
+
+  setShowShipTrajectories(value: boolean): void {
+    this.showShipTrajectories = value;
+    this.save();
+  }
+
+  setForceMaxTerrainDetail(value: boolean): void {
+    this.forceMaxTerrainDetail = value;
+    this.save();
+  }
+
   private load(): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -71,11 +97,17 @@ class GraphicsSettings {
           nightBrightness?: number;
           invertSelectionAreaResize?: boolean;
           developerMode?: boolean;
+          showOrbitLines?: boolean;
+          showShipTrajectories?: boolean;
+          forceMaxTerrainDetail?: boolean;
         };
         if (typeof data.presetIndex === "number") this.presetIndex = data.presetIndex;
         if (typeof data.nightBrightness === "number") this.nightBrightness = data.nightBrightness;
         if (typeof data.invertSelectionAreaResize === "boolean") this.invertSelectionAreaResize = data.invertSelectionAreaResize;
         if (typeof data.developerMode === "boolean") this.developerMode = data.developerMode;
+        if (typeof data.showOrbitLines === "boolean") this.showOrbitLines = data.showOrbitLines;
+        if (typeof data.showShipTrajectories === "boolean") this.showShipTrajectories = data.showShipTrajectories;
+        if (typeof data.forceMaxTerrainDetail === "boolean") this.forceMaxTerrainDetail = data.forceMaxTerrainDetail;
       }
     } catch {
       // localStorage unavailable or corrupted - fall back to default silently.
@@ -91,6 +123,9 @@ class GraphicsSettings {
           nightBrightness: this.nightBrightness,
           invertSelectionAreaResize: this.invertSelectionAreaResize,
           developerMode: this.developerMode,
+          showOrbitLines: this.showOrbitLines,
+          showShipTrajectories: this.showShipTrajectories,
+          forceMaxTerrainDetail: this.forceMaxTerrainDetail,
         }),
       );
     } catch {

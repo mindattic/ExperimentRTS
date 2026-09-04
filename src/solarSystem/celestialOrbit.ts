@@ -1,4 +1,4 @@
-import { Color3, MeshBuilder, Quaternion, Scene, TransformNode, Vector3 } from "@babylonjs/core";
+import { Color3, type LinesMesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3 } from "@babylonjs/core";
 
 const ORBIT_LINE_SEGMENTS = 128;
 /** Samples per full orbit in the precomputed position cache - see the class doc comment. At
@@ -103,8 +103,9 @@ export class CelestialOrbit {
    * carries the line along with a moving parent (a moon's orbit line needs to follow its
    * planet) - the line's own points are always expressed in the same local-to-focus space as
    * positionAt(), so it only reads correctly unparented (world space, star-orbiting bodies) or
-   * parented to whatever that focus actually is (a moon's parent planet). */
-  createOrbitLine(scene: Scene, name: string, color = new Color3(0.45, 0.5, 0.6), parentNode: TransformNode | null = null): void {
+   * parented to whatever that focus actually is (a moon's parent planet). Returns the created
+   * mesh so callers can collect it for a "show orbit lines" visibility toggle. */
+  createOrbitLine(scene: Scene, name: string, color = new Color3(0.45, 0.5, 0.6), parentNode: TransformNode | null = null): LinesMesh {
     const points: Vector3[] = [];
     for (let i = 0; i <= ORBIT_LINE_SEGMENTS; i++) {
       points.push(this.positionAt((i / ORBIT_LINE_SEGMENTS) * Math.PI * 2));
@@ -114,6 +115,7 @@ export class CelestialOrbit {
     line.alpha = 0.2; // 80% transparent
     line.isPickable = false;
     line.parent = parentNode;
+    return line;
   }
 
   /** World-space point on the orbit ellipse at parameter `theta` (0..2π), focus at the origin. */
