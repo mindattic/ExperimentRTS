@@ -6,12 +6,23 @@ const MIN_EYE_HEIGHT = 30;
 const MAX_EYE_HEIGHT = 160;
 const ZOOM_SPEED = 90; // eye-height units per wheel notch
 const PITCH_DEG = 55;
+/** How long the entry blend from the orbit camera's last position runs. */
+const ENTRY_BLEND_SECONDS = 0.35;
 
 const tmpMatrix = new Matrix();
 const tmpQuat = new Quaternion();
 const tmpEast = new Vector3();
 const tmpNorth = new Vector3();
 const tmpMove = new Vector3();
+const tmpTargetPos = new Vector3();
+const tmpLookDir = new Vector3();
+const tmpForward = new Vector3();
+const tmpTargetRot = new Quaternion();
+
+function easeOutCubic(t: number): number {
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
 
 /**
  * Fixed RTS-style ground camera: anchored to a point on the planet's surface, panned with
@@ -34,6 +45,10 @@ export class RtsGroundCamera {
   /** Set to true for one frame when the player zooms out past the max eye height. */
   requestExitToOrbit = false;
 
+  private blendStartPos: Vector3 | null = null;
+  private blendStartRot: Quaternion | null = null;
+  private blendElapsed = 0;
+
   constructor(scene: Scene, canvas: HTMLCanvasElement, heightfield: PlanetHeightfield) {
     this.canvas = canvas;
     this.heightfield = heightfield;
@@ -42,10 +57,27 @@ export class RtsGroundCamera {
     this.camera.minZ = 0.1;
     this.camera.maxZ = 100000;
     this.camera.fov = 0.75;
+    this.camera.rotationQuaternion = new Quaternion();
   }
 
-  attach(): void {
+  /**
+   * @param fromWorldPosition If given (together with fromRotation), the camera position and
+   * orientation blend in from these over ENTRY_BLEND_SECONDS instead of snapping straight to
+   * the computed ground pose - used to soften the orbit -> ground mode handoff into a real
+   * camera movement rather than a cut. Also resets eyeHeight to its max so the handoff reads
+   * as a continuation of the zoom that triggered it, not a jump to a close-up view.
+   */
+  attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion): void {
     this.requestExitToOrbit = false;
+    this.eyeHeight = MAX_EYE_HEIGHT;
+    if (fromWorldPosition && fromRotation) {
+      this.blendStartPos = fromWorldPosition.clone();
+      this.blendStartRot = fromRotation.clone();
+      this.blendElapsed = 0;
+    } else {
+      this.blendStartPos = null;
+      this.blendStartRot = null;
+    }
     window.addEventListener("keydown", this.keydownHandler);
     window.addEventListener("keyup", this.keyupHandler);
     this.canvas.addEventListener("wheel", this.wheelHandler, { passive: true });
@@ -73,9 +105,12 @@ export class RtsGroundCamera {
   }
 
   private localBasis(east: Vector3, north: Vector3): void {
-    Vector3.CrossToRef(Vector3.Up(), this.anchor, east);
+    // Cross order here is chosen so `east` matches the camera's actual screen-right (verified
+    // empirically against the rendered view, not derived analytically) - swapping it flips
+    // ArrowLeft/ArrowRight and A/D.
+    Vector3.CrossToRef(this.anchor, Vector3.Up(), east);
     if (east.lengthSquared() < 1e-6) {
-      Vector3.CrossToRef(Vector3.Forward(), this.anchor, east);
+      Vector3.CrossToRef(this.anchor, Vector3.Forward(), east);
     }
     east.normalize();
     Vector3.CrossToRef(this.anchor, east, north);
@@ -109,7 +144,28 @@ export class RtsGroundCamera {
     const heightUp = this.eyeHeight * Math.sin((PITCH_DEG * Math.PI) / 180);
     const pullback = this.eyeHeight * Math.cos((PITCH_DEG * Math.PI) / 180) + distanceBack;
 
-    this.camera.position.copyFrom(groundPos).addInPlace(this.anchor.scale(heightUp)).subtractInPlace(tmpNorth.scale(pullback));
-    this.camera.setTarget(groundPos);
+    tmpTargetPos.copyFrom(groundPos).addInPlace(this.anchor.scale(heightUp)).subtractInPlace(tmpNorth.scale(pullback));
+
+    // Orientation via rotationQuaternion (not setTarget) using `anchor` as up: setTarget's
+    // default upVector is world-Y, which is wrong everywhere except near the north pole - in
+    // the southern hemisphere it renders the view upside down (terrain appears "in the sky").
+    // `anchor` is always the correct local up at the ground point, in any hemisphere.
+    tmpLookDir.copyFrom(groundPos).subtractInPlace(tmpTargetPos).normalize();
+    tmpForward.copyFrom(tmpLookDir).scaleInPlace(-1); // see OrbitTrackballCamera for the empirically-verified sign convention
+    Quaternion.FromLookDirectionLHToRef(tmpForward, this.anchor, tmpTargetRot);
+
+    if (this.blendStartPos && this.blendStartRot) {
+      this.blendElapsed += deltaSeconds;
+      const t = easeOutCubic(Math.min(1, this.blendElapsed / ENTRY_BLEND_SECONDS));
+      Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
+      Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
+      if (t >= 1) {
+        this.blendStartPos = null;
+        this.blendStartRot = null;
+      }
+    } else {
+      this.camera.position.copyFrom(tmpTargetPos);
+      this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
+    }
   }
 }

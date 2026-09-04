@@ -12,13 +12,15 @@ export interface PatchMeshData {
 
 const scratch = new Vector3();
 
-const LOW_COLOR: readonly number[] = [0.55, 0.42, 0.28];
+const LOW_COLOR: readonly number[] = [0.5, 0.38, 0.25];
 const MID_COLOR: readonly number[] = [0.8, 0.65, 0.45];
-const HIGH_COLOR: readonly number[] = [0.85, 0.8, 0.72];
+// Mountain rock, not pale sandstone: a deep, saturated rust/umber so peaks read as higher and
+// harder than the surrounding dunes rather than fading out light.
+const HIGH_COLOR: readonly number[] = [0.32, 0.17, 0.12];
 
 function colorForElevation(elevation: number, out: number[]) {
-  const t = Math.min(1, Math.max(0, (elevation + 20) / 120));
-  const [a, b, k] = t < 0.5 ? [LOW_COLOR, MID_COLOR, t / 0.5] : [MID_COLOR, HIGH_COLOR, (t - 0.5) / 0.5];
+  const t = Math.min(1, Math.max(0, (elevation + 15) / 55));
+  const [a, b, k] = t < 0.55 ? [LOW_COLOR, MID_COLOR, t / 0.55] : [MID_COLOR, HIGH_COLOR, (t - 0.55) / 0.45];
   out.push(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, 1);
 }
 

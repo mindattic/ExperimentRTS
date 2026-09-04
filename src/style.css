@@ -19,3 +19,28 @@ body {
   touch-action: none;
   outline: none;
 }
+
+#reorientButton {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  pointer-events: auto;
+  padding: 8px 16px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  color: #eee;
+  background: rgba(20, 20, 24, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+#reorientButton:hover {
+  background: rgba(40, 40, 46, 0.85);
+}
+
+#reorientButton[hidden] {
+  display: none;
+}

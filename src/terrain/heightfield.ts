@@ -14,6 +14,12 @@ interface BiomeSeed {
 const BIOME_SEED_COUNT = 28;
 /** Width, in unit-sphere distance, of the smoothed transition between two biome cells. */
 const BIOME_BLEND_SPAN = 0.18;
+/**
+ * Soft ceiling/floor on elevation, in meters. Approached smoothly (via tanh, not a hard clip)
+ * so even the most extreme terrain a preset can produce rounds off into a peak/pit instead of
+ * a razor-sharp spike - a hard clamp would instead flatten extremes into an unnatural plateau.
+ */
+const ELEVATION_CAP = 32;
 
 /** Procedural, seeded elevation field for the whole planet, sampled directly on the unit sphere (seamless across cube-sphere faces). */
 export class PlanetHeightfield {
@@ -21,7 +27,7 @@ export class PlanetHeightfield {
   private readonly seeds: BiomeSeed[] = [];
 
   constructor(seed: number) {
-    this.fbm = new Fbm3(seed, 5, 2.05, 0.5);
+    this.fbm = new Fbm3(seed, 4, 2.0, 0.45);
 
     const rand = mulberry32(seed ^ 0x9e3779b9);
     for (let i = 0; i < BIOME_SEED_COUNT; i++) {
@@ -69,6 +75,7 @@ export class PlanetHeightfield {
     const presetB = TOPOLOGIES[this.seeds[i1].topology];
     const ha = presetA.height01(dir.x, dir.y, dir.z, this.fbm) * presetA.amplitudeMeters;
     const hb = presetB.height01(dir.x, dir.y, dir.z, this.fbm) * presetB.amplitudeMeters;
-    return ha * (1 - w) + hb * w;
+    const raw = ha * (1 - w) + hb * w;
+    return ELEVATION_CAP * Math.tanh(raw / ELEVATION_CAP);
   }
 }

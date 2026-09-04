@@ -1,10 +1,10 @@
-import { Color3, Mesh, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
+import { Color3, Mesh, Scene, StandardMaterial, TransformNode, Vector3 } from "@babylonjs/core";
 import { CUBE_FACES } from "./cubeSphere";
 import { PlanetHeightfield } from "./heightfield";
 import { buildPatchMesh } from "./patchMesh";
 import { QuadNode } from "./quadNode";
 
-const PATCH_RESOLUTION = 17;
+const PATCH_RESOLUTION = 33;
 const MAX_DEPTH = 9;
 const SPLIT_FACTOR = 2.0;
 const MERGE_FACTOR = 2.6;
@@ -22,15 +22,22 @@ export class PlanetTerrain {
   private readonly generationQueue: QuadNode[] = [];
   private readonly scene: Scene;
   private readonly planetRadius: number;
+  private readonly parentNode: TransformNode | null;
 
-  constructor(scene: Scene, planetRadius: number, seed: number) {
+  constructor(scene: Scene, planetRadius: number, seed: number, parentNode: TransformNode | null = null) {
     this.scene = scene;
     this.planetRadius = planetRadius;
+    this.parentNode = parentNode;
     this.heightfield = new PlanetHeightfield(seed);
 
     this.material = new StandardMaterial("planetTerrainMaterial", scene);
     this.material.diffuseColor = Color3.White();
     this.material.specularColor = Color3.Black();
+    // The camera's near/far range spans from ground-level (~0.1) out past the star's orbit
+    // (~160,000 planet-radii away), a ratio far beyond what a standard depth buffer resolves -
+    // without this, the far side of the terrain sphere z-fights and pops through the near
+    // side. Logarithmic depth is the standard fix for exactly this planet-scale range.
+    this.material.useLogarithmicDepth = true;
 
     for (const face of CUBE_FACES) {
       const root = new QuadNode(face, -1, -1, 2, 0);
@@ -39,7 +46,10 @@ export class PlanetTerrain {
     }
   }
 
-  /** Call once per frame with the camera's world-space position. */
+  /**
+   * Call once per frame with the camera's position local to the same parent node the terrain
+   * is parented to (not `globalPosition`) - patch centers are stored in that local frame.
+   */
   update(cameraPosition: Vector3): void {
     this.processGenerationQueue();
     for (const root of this.roots) {
@@ -70,6 +80,7 @@ export class PlanetTerrain {
     const mesh = new Mesh(`patch_f${node.face.id}_d${node.depth}_${node.u0.toFixed(4)}_${node.v0.toFixed(4)}`, this.scene);
     vertexData.applyToMesh(mesh, true);
     mesh.material = this.material;
+    mesh.parent = this.parentNode;
     mesh.setEnabled(false);
     node.mesh = mesh;
     node.center = center;
