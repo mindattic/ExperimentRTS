@@ -16,6 +16,7 @@ import {
 import { RtsGroundCamera } from "./camera/rtsGroundCamera";
 import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { FreeFlyCamera } from "./camera/freeFlyCamera";
+import { computeLookRotationToRef } from "./camera/lookRotation";
 import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, sceneDistance } from "./solarSystem/scale";
 import { SelectionUI } from "./ui/selection";
@@ -25,6 +26,7 @@ import { graphicsSettings } from "./settings/graphicsSettings";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
+const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
 
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
@@ -92,6 +94,7 @@ async function main() {
   let tabPressed = false;
   let reorientPressed = false;
   let freeCamTogglePressed = false;
+  let lockPlaneTogglePressed = false;
 
   const settingsMenu = new SettingsMenu(
     () => {
@@ -111,6 +114,7 @@ async function main() {
     }
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
     if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
+    if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
   });
 
   function enterGroundMode() {
@@ -125,7 +129,7 @@ async function main() {
 
   function exitToOrbitMode() {
     groundCamera.detach();
-    orbitCamera.setViewDirFromWorldPoint(groundCamera.anchor);
+    orbitCamera.resetView(groundCamera.anchor);
     scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
@@ -151,17 +155,19 @@ async function main() {
       freeFlyCamera.attach();
       freeCamActive = true;
       freeCamBadge.hidden = false;
+      planeLockBadge.hidden = true;
     } else {
       freeFlyCamera.detach();
       freeCamActive = false;
       freeCamBadge.hidden = true;
 
       orbitCamera.camera.parent = focused.orbit.spinNode;
-      orbitCamera.setViewDirFromWorldPoint(new Vector3(0, 0.35, 1));
-      orbitCamera.radius = thresholds.defaultOrbit;
+      orbitCamera.resetView(new Vector3(0, 0.35, 1));
+      orbitCamera.setRadius(thresholds.defaultOrbit);
       scene.activeCamera = orbitCamera.camera;
       orbitCamera.attach();
       mode = "orbit";
+      planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
     }
   }
 
@@ -178,9 +184,11 @@ async function main() {
   const transitApproachDir = new Vector3();
   const tmpArrivalPos = new Vector3();
   const tmpArrivalRot = new Quaternion();
+  const tmpArrivalForward = new Vector3();
   const tmpInvMatrix = new Matrix();
   const tmpLocalViewDir = new Vector3();
   const tmpLocalUp = new Vector3();
+  const tmpFreeCamLocalPos = new Vector3();
 
   function beginTransit() {
     if (mode !== "orbit" || transiting || freeCamActive) return;
@@ -214,7 +222,11 @@ async function main() {
     const targetThresholds = radiusThresholds(target.radius);
     const targetWorldPos = target.orbit.spinNode.getAbsolutePosition();
     tmpArrivalPos.copyFrom(targetWorldPos).addInPlace(transitApproachDir.scale(targetThresholds.defaultOrbit));
-    Quaternion.FromLookDirectionLHToRef(transitApproachDir, Vector3.Up(), tmpArrivalRot);
+    // Camera arrives on the near side (along transitApproachDir from the target) looking back
+    // toward it, i.e. forward is the opposite direction - see lookRotation.ts for why this
+    // goes through computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
+    tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
+    computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
 
     const camera = orbitCamera.camera;
     Vector3.LerpToRef(transitFromPos, tmpArrivalPos, eased, camera.position);
@@ -241,7 +253,7 @@ async function main() {
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.setViewDirFromWorldPoint(tmpLocalViewDir);
     orbitCamera.up.copyFrom(tmpLocalUp);
-    orbitCamera.radius = thresholds.defaultOrbit;
+    orbitCamera.setRadius(thresholds.defaultOrbit);
     orbitCamera.setRadiusLimits(thresholds.minOrbit, thresholds.maxOrbit);
 
     if (target.landable && target.heightfield) {
@@ -266,14 +278,22 @@ async function main() {
       groundCamera.update(dt, focused.radius);
     }
 
-    if (!transiting && !freeCamActive) {
+    if (transiting) {
+      // Keep every body's orbit/spin advancing during transit (including the live target),
+      // but skip terrain LOD work - camera position isn't meaningful in any body's local
+      // frame while it's unparented mid-flight.
+      solarSystem.update(dt, Vector3.Zero(), sun);
+    } else if (freeCamActive) {
+      // Free cam is unparented (true world space), so the focused body's terrain still needs
+      // its camera position converted into that body's local frame - otherwise LOD freezes at
+      // whatever level it was when free cam was toggled on, making nearby terrain look
+      // permanently low-res no matter how close the camera actually flies.
+      focused.orbit.spinNode.getWorldMatrix().invertToRef(tmpInvMatrix);
+      Vector3.TransformCoordinatesToRef(freeFlyCamera.camera.globalPosition, tmpInvMatrix, tmpFreeCamLocalPos);
+      solarSystem.update(dt, tmpFreeCamLocalPos, sun);
+    } else {
       const focusedCameraLocalPosition = mode === "orbit" ? orbitCamera.camera.position : groundCamera.camera.position;
       solarSystem.update(dt, focusedCameraLocalPosition, sun);
-    } else {
-      // Keep every body's orbit/spin advancing during transit/free-cam (including the live
-      // transit target), but skip terrain LOD work - camera position isn't meaningful in any
-      // body's local frame right now.
-      solarSystem.update(dt, Vector3.Zero(), sun);
     }
 
     if (freeCamTogglePressed) toggleFreeCam();
@@ -282,6 +302,12 @@ async function main() {
     if (!freeCamActive) {
       if (reorientPressed && mode === "orbit") orbitCamera.reorient();
       reorientPressed = false;
+
+      if (lockPlaneTogglePressed && mode === "orbit") {
+        orbitCamera.setPlaneLocked(!orbitCamera.isPlaneLocked);
+        planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
+      }
+      lockPlaneTogglePressed = false;
 
       if (tabPressed) beginTransit();
       tabPressed = false;

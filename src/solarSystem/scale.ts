@@ -25,10 +25,19 @@ export function sceneDistance(au: number): number {
   return EARTH_DISTANCE * Math.pow(au, 0.65);
 }
 
+/** Single knob for "slow everything down further" requests - multiplies every period (both
+ * orbit and axial spin) by 1/SPEED_MULTIPLIER, so 0.1 means "10x slower" ("slow by 90%"). */
+const SPEED_MULTIPLIER = 0.1;
+
 /** Compresses a real orbital period (Earth years) into scene seconds. Outer bodies still orbit slower than inner ones, just not by 100x+. */
 export function orbitPeriodSeconds(earthYears: number): number {
   const EARTH_ORBIT_SECONDS = 1800; // 30 minutes for a full Earth year, per "slow down further, minutes not seconds"
-  return EARTH_ORBIT_SECONDS * Math.pow(earthYears, 0.55);
+  return (EARTH_ORBIT_SECONDS * Math.pow(earthYears, 0.55)) / SPEED_MULTIPLIER;
+}
+
+/** Applies the same global slowdown to a body's raw axial spin period. */
+export function spinPeriodSeconds(def: BodyDef): number {
+  return def.spinPeriodSeconds / SPEED_MULTIPLIER;
 }
 
 export type BodyKind = "rocky" | "dwarf" | "gasGiant";

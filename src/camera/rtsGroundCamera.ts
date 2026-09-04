@@ -1,6 +1,7 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import type { PlanetHeightfield } from "../terrain/heightfield";
 import { keybindings } from "../input/keybindings";
+import { computeLookRotationToRef } from "./lookRotation";
 
 const PAN_SPEED = 220; // units/sec at planet-surface scale
 const MIN_EYE_HEIGHT = 30;
@@ -21,7 +22,6 @@ const tmpNorth = new Vector3();
 const tmpMove = new Vector3();
 const tmpTargetPos = new Vector3();
 const tmpLookDir = new Vector3();
-const tmpForward = new Vector3();
 const tmpTargetRot = new Quaternion();
 const tmpPanAxis = new Vector3();
 const tmpHeadingQuat = new Quaternion();
@@ -255,13 +255,16 @@ export class RtsGroundCamera {
 
     tmpTargetPos.copyFrom(groundPos).addInPlace(this.anchor.scale(heightUp)).subtractInPlace(tmpNorth.scale(pullback));
 
-    // Orientation via rotationQuaternion (not setTarget) using `anchor` as up: setTarget's
-    // default upVector is world-Y, which is wrong everywhere except near the north pole - in
-    // the southern hemisphere it renders the view upside down (terrain appears "in the sky").
-    // `anchor` is always the correct local up at the ground point, in any hemisphere.
+    // Orientation via rotationQuaternion (not setTarget) using `anchor` as the up hint:
+    // setTarget's default upVector is world-Y, which is wrong everywhere except near the north
+    // pole - in the southern hemisphere it renders the view upside down (terrain appears "in
+    // the sky"). `anchor` is always the correct local up at the ground point, in any
+    // hemisphere. See lookRotation.ts for why this goes through computeLookRotationToRef
+    // rather than Babylon's own FromLookDirectionLHToRef (which mishandles exactly this case -
+    // anchor sits ~90+PITCH_DEG degrees from the look direction by design, since a camera
+    // pitched steeply downward looks closer to straight down than to level).
     tmpLookDir.copyFrom(groundPos).subtractInPlace(tmpTargetPos).normalize();
-    tmpForward.copyFrom(tmpLookDir).scaleInPlace(-1); // see OrbitTrackballCamera for the empirically-verified sign convention
-    Quaternion.FromLookDirectionLHToRef(tmpForward, this.anchor, tmpTargetRot);
+    computeLookRotationToRef(tmpLookDir, this.anchor, tmpTargetRot);
 
     if (this.blendStartPos && this.blendStartRot) {
       this.blendElapsed += deltaSeconds;

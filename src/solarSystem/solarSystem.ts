@@ -2,7 +2,7 @@ import { DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
 import { Star } from "../environment/star";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
-import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, STAR_RADIUS } from "./scale";
+import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, STAR_RADIUS } from "./scale";
 import { mulberry32 } from "../terrain/prng";
 
 const tmpSunDirection = new Vector3();
@@ -33,7 +33,7 @@ export class SolarSystem {
         eccentricity: def.eccentricity,
         orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
         orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
-        spinPeriodSeconds: def.retrograde ? -def.spinPeriodSeconds : def.spinPeriodSeconds,
+        spinPeriodSeconds: def.retrograde ? -spinPeriodSeconds(def) : spinPeriodSeconds(def),
         spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
         startAngle: (index / BODY_DEFS.length) * Math.PI * 2 + rand() * 0.5,
       });

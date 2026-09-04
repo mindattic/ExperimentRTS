@@ -1,5 +1,6 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import { keybindings } from "../input/keybindings";
+import { computeLookRotationToRef } from "./lookRotation";
 
 const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
 const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
@@ -39,6 +40,12 @@ export class OrbitTrackballCamera {
   private velPitch = 0;
   /** True only while an explicit reorient() is actively blending roll back to level. */
   private reorienting = false;
+  /** True while locked to the solar plane - see setPlaneLocked(). */
+  private planeLocked = false;
+  /** Reference "up" used for the whole system when plane-locked - world Y approximates the
+   * solar plane's normal closely enough (every body's real orbitAxis is only lightly
+   * jittered around it - see solarSystem.ts). */
+  private readonly planeAxis = Vector3.Up();
 
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
@@ -89,9 +96,38 @@ export class OrbitTrackballCamera {
     this.viewDir.copyFrom(worldPoint).normalize();
   }
 
+  /** Like setViewDirFromWorldPoint, but also recomputes a fresh, orthogonal `up` at the new
+   * direction instead of leaving the old one in place. Use this (not setViewDirFromWorldPoint
+   * alone) whenever viewDir jumps to a direction unrelated to wherever the camera was just
+   * looking - e.g. handing back control after Free Cam left the camera facing anywhere for an
+   * arbitrary amount of time. A stale `up` can end up nearly parallel to the new viewDir, and
+   * update()'s defensive re-orthonormalization then normalizes a near-zero-length vector,
+   * corrupting rotationQuaternion (and, downstream, whatever entry blend snapshots it next -
+   * e.g. RtsGroundCamera's orbit->ground handoff). */
+  resetView(worldPoint: Vector3): void {
+    this.viewDir.copyFrom(worldPoint).normalize();
+    const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+    this.up.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+    if (this.up.lengthSquared() < 1e-6) {
+      // viewDir itself is (anti)parallel to world-Y - world-Right can't be, so fall back to it.
+      this.up.copyFrom(Vector3.Right());
+    } else {
+      this.up.normalize();
+    }
+  }
+
   /** Smoothly animates the radius toward `target` over the next several frames. */
   flyToRadius(target: number): void {
     this.targetRadius = target;
+  }
+
+  /** Snaps radius to `value` immediately, cancelling any in-flight flyToRadius() - without
+   * this, a still-converging flyToRadius from moments earlier (e.g. exitToOrbitMode's flight
+   * back up from ground level rarely finishes within a second) silently drags the camera back
+   * toward its old target on the very next frame, undoing the snap. */
+  setRadius(value: number): void {
+    this.targetRadius = null;
+    this.radius = value;
   }
 
   /** Updates the zoom clamp range - used when focus switches to a body of a different size. */
@@ -113,6 +149,17 @@ export class OrbitTrackballCamera {
     this.velYaw = 0;
     this.velPitch = 0;
     this.reorienting = true;
+  }
+
+  /** Toggles a constrained mode where the camera can only yaw/pitch around a fixed
+   * solar-plane-aligned axis (like a traditional orbit camera) instead of freely tumbling -
+   * for when the free trackball's roll gets disorienting. */
+  setPlaneLocked(locked: boolean): void {
+    this.planeLocked = locked;
+  }
+
+  get isPlaneLocked(): boolean {
+    return this.planeLocked;
   }
 
   private onPointerDown(e: PointerEvent): void {
@@ -157,24 +204,30 @@ export class OrbitTrackballCamera {
 
   /** Rotates viewDir (and, for the pitch component, up) around the CURRENT local axes - not
    * fixed world axes - so repeated drags can tumble to any orientation instead of getting
-   * stuck yawing around a fixed pole. */
+   * stuck yawing around a fixed pole. When plane-locked, both yaw and pitch instead rotate
+   * around the fixed `planeAxis` (a traditional constrained orbit camera) and `up` is left
+   * alone here - update() forces it back to level every frame while locked. */
   private rotateStep(yawAngle: number, pitchAngle: number): void {
+    const yawAxis = this.planeLocked ? this.planeAxis : this.up;
     if (yawAngle !== 0) {
-      Quaternion.RotationAxisToRef(this.up, yawAngle, tmpQuat);
+      Quaternion.RotationAxisToRef(yawAxis, yawAngle, tmpQuat);
       Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
       Vector3.TransformCoordinatesToRef(this.viewDir, tmpMatrix, this.viewDir);
       this.viewDir.normalize();
     }
     if (pitchAngle !== 0) {
-      Vector3.CrossToRef(this.up, this.viewDir, tmpRight);
+      const pitchAxisRef = this.planeLocked ? this.planeAxis : this.up;
+      Vector3.CrossToRef(pitchAxisRef, this.viewDir, tmpRight);
       if (tmpRight.lengthSquared() < 1e-6) return;
       tmpRight.normalize();
       Quaternion.RotationAxisToRef(tmpRight, pitchAngle, tmpQuat);
       Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
       Vector3.TransformCoordinatesToRef(this.viewDir, tmpMatrix, this.viewDir);
-      Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
+      if (!this.planeLocked) {
+        Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
+        this.up.normalize();
+      }
       this.viewDir.normalize();
-      this.up.normalize();
     }
   }
 
@@ -218,6 +271,16 @@ export class OrbitTrackballCamera {
       }
     }
 
+    if (this.planeLocked) {
+      // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
+      // rather than letting it free-tumble like the unlocked mode does - this is what makes
+      // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
+      const d = Vector3.Dot(this.planeAxis, this.viewDir);
+      this.up.copyFrom(this.planeAxis).subtractInPlace(this.viewDir.scale(d));
+      if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.Right());
+      this.up.normalize();
+    }
+
     // Defensive re-orthonormalization against drift from repeated small rotations/lerps.
     const upDotView = Vector3.Dot(this.up, this.viewDir);
     this.up.subtractInPlace(this.viewDir.scale(upDotView));
@@ -233,11 +296,10 @@ export class OrbitTrackballCamera {
     }
 
     this.camera.position.copyFrom(this.viewDir).scaleInPlace(this.radius);
-    // Empirically (verified by inspecting the resulting view target), FromLookDirectionLHToRef's
-    // "forward" ends up as the camera's local -Z, i.e. the effective look direction comes out
-    // negated from what's passed in - so passing viewDir itself (not -viewDir) is what actually
-    // points the camera at the origin from its position along +viewDir.
-    tmpForward.copyFrom(this.viewDir);
-    Quaternion.FromLookDirectionLHToRef(tmpForward, this.up, this.camera.rotationQuaternion!);
+    // The camera looks toward the planet center, i.e. the opposite of viewDir (which points
+    // from center to camera). See lookRotation.ts for why this goes through
+    // computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
+    tmpForward.copyFrom(this.viewDir).scaleInPlace(-1);
+    computeLookRotationToRef(tmpForward, this.up, this.camera.rotationQuaternion!);
   }
 }

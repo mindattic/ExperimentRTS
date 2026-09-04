@@ -11,6 +11,7 @@ export type Action =
   | "groundRotateRight"
   | "reorient"
   | "freeCam"
+  | "lockPlane"
   | "focusMenu"
   | "travel"
   | "exitGround";
@@ -28,6 +29,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   groundRotateRight: "Ground: rotate right",
   reorient: "Reorient camera",
   freeCam: "Toggle free cam",
+  lockPlane: "Lock orbit to solar plane",
   focusMenu: "Open focus list",
   travel: "Plot course (travel)",
   exitGround: "Exit ground mode",
@@ -46,6 +48,7 @@ const DEFAULTS: Record<Action, string> = {
   groundRotateRight: "KeyE",
   reorient: "KeyR",
   freeCam: "KeyF",
+  lockPlane: "KeyP",
   focusMenu: "Digit1",
   travel: "Tab",
   exitGround: "Escape",

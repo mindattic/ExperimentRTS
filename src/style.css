@@ -223,6 +223,27 @@ body {
   display: none;
 }
 
+.plane-lock-badge {
+  position: fixed;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 6px 14px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #7bd0ff;
+  background: rgba(20, 20, 24, 0.75);
+  border: 1px solid rgba(123, 208, 255, 0.4);
+  border-radius: 6px;
+}
+
+.plane-lock-badge[hidden] {
+  display: none;
+}
+
 .focus-list {
   position: fixed;
   top: 16px;
