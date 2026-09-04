@@ -22,6 +22,7 @@ const tmpMatrix = new Matrix();
 export class FreeFlyCamera {
   readonly camera: UniversalCamera;
 
+  private cursorModeActive = false;
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
   private mouseMoveHandler = (e: MouseEvent) => this.onMouseMove(e);
@@ -48,6 +49,7 @@ export class FreeFlyCamera {
   attach(): void {
     // Requested synchronously from the F-keypress handler that calls attach(), which counts
     // as the user gesture the Pointer Lock API requires.
+    this.cursorModeActive = false;
     this.canvas.requestPointerLock();
     window.addEventListener("mousemove", this.mouseMoveHandler);
     window.addEventListener("keydown", this.keydownHandler);
@@ -60,6 +62,25 @@ export class FreeFlyCamera {
     window.removeEventListener("keydown", this.keydownHandler);
     window.removeEventListener("keyup", this.keyupHandler);
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+  }
+
+  /** MMO-style "Alt to free the cursor": pauses mouselook and releases Pointer Lock so the OS
+   * cursor reappears and can click on-screen UI, without leaving free cam or stopping WASD
+   * movement. onMouseMove already no-ops whenever document.pointerLockElement isn't this canvas
+   * (see below), so exiting/re-requesting Pointer Lock alone is enough to pause/resume look -
+   * no separate flag needs checking there. */
+  setCursorMode(active: boolean): void {
+    if (active === this.cursorModeActive) return;
+    this.cursorModeActive = active;
+    if (active) {
+      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    } else if (document.pointerLockElement !== this.canvas) {
+      this.canvas.requestPointerLock();
+    }
+  }
+
+  get isCursorModeActive(): boolean {
+    return this.cursorModeActive;
   }
 
   private onMouseMove(e: MouseEvent): void {

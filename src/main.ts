@@ -32,6 +32,7 @@ import { graphicsSettings } from "./settings/graphicsSettings";
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
 const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
+const cursorModeBadge = document.getElementById("cursorModeBadge") as HTMLElement;
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
@@ -133,16 +134,23 @@ async function main() {
 
   let mode: "orbit" | "ground" = "orbit";
   let freeCamActive = false;
+  let cursorModeActive = false;
   let escapePressed = false;
-  let tabPressed = false;
+  let travelPressed = false;
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
+  let cursorModeTogglePressed = false;
+  // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
+  // flies the camera back up past the enterGround threshold - without it, that upward flight's
+  // own still-below-threshold starting radius would immediately bounce straight back into
+  // ground mode before it ever got anywhere (see exitToOrbitMode/enterGroundMode below).
+  let groundExitCooldownRemaining = 0;
 
   const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas, freeFlyCamera, () => freeCamActive);
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
-  const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo());
+  const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
 
   const settingsMenu = new SettingsMenu(
     () => {
@@ -158,7 +166,7 @@ async function main() {
     if (e.code === keybindings.get("exitGround")) escapePressed = true;
     if (e.code === keybindings.get("travel")) {
       e.preventDefault();
-      tabPressed = true;
+      travelPressed = true;
     }
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
     if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
@@ -169,6 +177,7 @@ async function main() {
       e.preventDefault();
       selectionUI.selectWithReticle();
     }
+    if (e.code === keybindings.get("cursorMode") && freeCamActive) cursorModeTogglePressed = true;
   });
 
   function enterGroundMode() {
@@ -188,6 +197,7 @@ async function main() {
     orbitCamera.attach();
     mode = "orbit";
     orbitCamera.flyToRadius(thresholds.exitOrbit);
+    groundExitCooldownRemaining = 0.5;
   }
 
   // --- Free cam: toggled independently of orbit/ground mode. Entering captures whichever
@@ -208,8 +218,10 @@ async function main() {
       scene.activeCamera = freeFlyCamera.camera;
       freeFlyCamera.attach();
       freeCamActive = true;
+      cursorModeActive = false;
       freeCamBadge.hidden = false;
       freeCamReticle.hidden = false;
+      cursorModeBadge.hidden = true;
       planeLockBadge.hidden = true;
       // If free cam starts out already within some body's catch radius (the common case -
       // free cam is usually toggled on while already close to whatever you were just orbiting),
@@ -219,8 +231,10 @@ async function main() {
     } else {
       freeFlyCamera.detach();
       freeCamActive = false;
+      cursorModeActive = false;
       freeCamBadge.hidden = true;
       freeCamReticle.hidden = true;
+      cursorModeBadge.hidden = true;
 
       orbitCamera.camera.parent = focused.orbit.spinNode;
       orbitCamera.resetView(new Vector3(0, 0.35, 1));
@@ -290,8 +304,10 @@ async function main() {
 
     freeFlyCamera.detach();
     freeCamActive = false;
+    cursorModeActive = false;
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
+    cursorModeBadge.hidden = true;
 
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.resetView(tmpLocalViewDir);
@@ -420,6 +436,8 @@ async function main() {
   engine.runRenderLoop(() => {
     const dt = engine.getDeltaTime() / 1000;
 
+    if (groundExitCooldownRemaining > 0) groundExitCooldownRemaining -= dt;
+
     if (freeCamActive) {
       freeFlyCamera.update(dt);
       updateFreeCamCatch(); // may flip freeCamActive/mode to orbit right here, mid-frame
@@ -462,12 +480,18 @@ async function main() {
       }
       lockPlaneTogglePressed = false;
 
-      if (tabPressed) beginTransit();
-      tabPressed = false;
+      if (travelPressed) beginTransit();
+      travelPressed = false;
 
       if (!transiting) {
         if (mode === "orbit") {
-          if (focused.landable && !orbitCamera.isFlying && orbitCamera.radius < thresholds.enterGround) {
+          // No !orbitCamera.isFlying guard here - now that scroll zoom flows through the same
+          // flyToRadius lerp as exitToOrbitMode's cinematic fly-up, "isFlying" no longer means
+          // "just exited ground mode" on its own. groundExitCooldownRemaining (set only by
+          // exitToOrbitMode) is the actual, narrowly-targeted guard against bouncing straight
+          // back into ground mode mid fly-up; ordinary scroll-in should enter ground mode
+          // promptly the moment the interpolating radius crosses below threshold, mid-lerp or not.
+          if (focused.landable && groundExitCooldownRemaining <= 0 && orbitCamera.radius < thresholds.enterGround) {
             enterGroundMode();
           }
         } else if (groundCamera.requestExitToOrbit || escapePressed) {
@@ -476,6 +500,14 @@ async function main() {
       }
     }
     escapePressed = false;
+
+    if (cursorModeTogglePressed && freeCamActive) {
+      cursorModeActive = !cursorModeActive;
+      freeFlyCamera.setCursorMode(cursorModeActive);
+      cursorModeBadge.hidden = !cursorModeActive;
+      freeCamReticle.hidden = cursorModeActive;
+    }
+    cursorModeTogglePressed = false;
 
     // Runs regardless of mode, including free cam, so the corner-bracket target-lock reticle
     // keeps tracking a selected body's screen position (via scene.activeCamera, which is

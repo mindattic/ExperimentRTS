@@ -15,7 +15,9 @@ export type Action =
   | "focusMenu"
   | "selectTarget"
   | "travel"
-  | "exitGround";
+  | "exitGround"
+  | "toggleLabels"
+  | "cursorMode";
 
 export const ACTION_LABELS: Record<Action, string> = {
   orbitYawLeft: "Orbit: yaw left",
@@ -35,6 +37,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   selectTarget: "Select target",
   travel: "Plot course (travel)",
   exitGround: "Exit ground mode",
+  toggleLabels: "Toggle info labels",
+  cursorMode: "Toggle cursor mode (free cam)",
 };
 
 const DEFAULTS: Record<Action, string> = {
@@ -53,16 +57,29 @@ const DEFAULTS: Record<Action, string> = {
   lockPlane: "KeyP",
   focusMenu: "Digit1",
   selectTarget: "Space",
-  travel: "Tab",
+  // Shares the Space default with selectTarget - safe because they're mode-exclusive (travel
+  // only fires in orbit mode, selectTarget only while free cam is active - see main.ts).
+  travel: "Space",
   exitGround: "Escape",
+  toggleLabels: "KeyL",
+  cursorMode: "AltLeft",
 };
 
 const STORAGE_KEY = "experimentrts.keybindings";
 
+const MODIFIER_LABELS: Partial<Record<string, string>> = {
+  AltLeft: "Alt",
+  AltRight: "Alt",
+  ShiftLeft: "Shift",
+  ShiftRight: "Shift",
+  ControlLeft: "Ctrl",
+  ControlRight: "Ctrl",
+};
+
 function codeToLabel(code: string): string {
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
-  return code;
+  return MODIFIER_LABELS[code] ?? code;
 }
 
 /** Rebindable action -> key-code map, persisted to localStorage. Arrow keys always work as a

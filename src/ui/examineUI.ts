@@ -1,4 +1,5 @@
 import { AbstractEngine, Matrix, Scene, Vector3 } from "@babylonjs/core";
+import { keybindings } from "../input/keybindings";
 
 export interface ExaminableInfo {
   worldPosition: Vector3;
@@ -21,40 +22,37 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Holding Alt reveals a floating info placard over every visible Base/Station/Ship at once -
- * a Diablo/Baldur's-Gate-style ground-item-label overlay, but for entities in 3D space. Modeled
- * directly on SelectionUI's Vector3.Project + behind-camera-tolerance pattern (screen.z < -0.01
- * || screen.z > 1.01, needed at this scene's huge scale - see that file's own comment),
- * generalized from one reticle to a POOLED set of placard <div>s (grown as needed, hidden not
- * destroyed when unused) so dozens can appear/disappear per frame without DOM thrashing.
+ * Toggling the labels key (L by default) reveals a floating info placard over every visible
+ * Base/Station/Ship at once - a Diablo/Baldur's-Gate-style ground-item-label overlay, but for
+ * entities in 3D space. Modeled directly on SelectionUI's Vector3.Project + behind-camera-
+ * tolerance pattern (screen.z < -0.01 || screen.z > 1.01, needed at this scene's huge scale -
+ * see that file's own comment), generalized from one reticle to a POOLED set of placard <div>s
+ * (grown as needed, hidden not destroyed when unused) so dozens can appear/disappear per frame
+ * without DOM thrashing.
  */
 export class ExamineUI {
   private readonly scene: Scene;
   private readonly engine: AbstractEngine;
   private readonly getEntities: () => ExaminableInfo[];
-  private altHeld = false;
+  private readonly isInputBlocked: () => boolean;
+  private labelsOn = false;
   private readonly containerEl: HTMLElement;
   private readonly pool: HTMLElement[] = [];
 
-  constructor(scene: Scene, engine: AbstractEngine, getEntities: () => ExaminableInfo[]) {
+  constructor(scene: Scene, engine: AbstractEngine, getEntities: () => ExaminableInfo[], isInputBlocked: () => boolean) {
     this.scene = scene;
     this.engine = engine;
     this.getEntities = getEntities;
+    this.isInputBlocked = isInputBlocked;
     this.containerEl = document.getElementById("examineLayer")!;
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Alt") this.altHeld = true;
-    });
-    window.addEventListener("keyup", (e) => {
-      if (e.key === "Alt") this.altHeld = false;
-    });
-    // Alt-tabbing away while holding Alt shouldn't leave this stuck open with no way to release it.
-    window.addEventListener("blur", () => {
-      this.altHeld = false;
+      if (this.isInputBlocked()) return;
+      if (e.code === keybindings.get("toggleLabels")) this.labelsOn = !this.labelsOn;
     });
   }
 
   update(): void {
-    if (!this.altHeld) {
+    if (!this.labelsOn) {
       for (const el of this.pool) el.hidden = true;
       return;
     }

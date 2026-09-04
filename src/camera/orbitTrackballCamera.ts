@@ -206,9 +206,14 @@ export class OrbitTrackballCamera {
   }
 
   private onWheel(e: WheelEvent): void {
-    this.targetRadius = null;
+    // Bases the step on the in-flight target (not the current, still-catching-up radius) so
+    // scrolling several notches in quick succession keeps compounding toward a farther target
+    // each time, rather than restarting from wherever the lerp has reached so far - the zoom
+    // itself always flows via flyToRadius's smoothing, never jumps straight to the new radius.
+    const base = this.targetRadius ?? this.radius;
     const factor = 1 + Math.sign(e.deltaY) * ZOOM_STEP_FRACTION;
-    this.radius = Math.min(this.maxRadius, Math.max(this.minRadius, this.radius * factor));
+    const next = Math.min(this.maxRadius, Math.max(this.minRadius, base * factor));
+    this.flyToRadius(next);
   }
 
   /** Rotates viewDir (and, for the pitch component, up) around the CURRENT local axes - not

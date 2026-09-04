@@ -11,6 +11,9 @@ const MIN_EYE_HEIGHT = 30;
 // isn't a separate thing to build, just a consequence of raising this constant.
 const MAX_EYE_HEIGHT = 320;
 const ZOOM_SPEED = 90; // eye-height units per wheel notch
+/** Exponential blend rate for zoom - same idea as OrbitTrackballCamera's RADIUS_LERP_RATE, just
+ * a bit snappier since ground mode's eye-height range is much smaller/finer-grained. */
+const EYE_HEIGHT_LERP_RATE = 6.0;
 const PITCH_DEG = 55;
 const HEADING_ROTATE_SPEED = 1.2; // rad/s while a rotate key is held
 /** How long the entry blend from the orbit camera's last position runs. */
@@ -71,6 +74,10 @@ export class RtsGroundCamera {
   readonly camera: UniversalCamera;
   readonly anchor = new Vector3(0, 1, 0);
   eyeHeight = 70;
+  /** In-flight zoom destination - see onWheel/update. Mirrors OrbitTrackballCamera's
+   * targetRadius so scroll zoom flows smoothly here too instead of jumping straight to the new
+   * eye height. */
+  private targetEyeHeight: number | null = null;
   /** Yaw offset applied on top of the anchor's natural north-facing tangent frame, rotated
    * with the groundRotateLeft/Right keys (Q/E by default) - rotates both the view and the
    * pan directions together. */
@@ -141,6 +148,7 @@ export class RtsGroundCamera {
   attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion): void {
     this.requestExitToOrbit = false;
     this.eyeHeight = MAX_EYE_HEIGHT;
+    this.targetEyeHeight = null;
     // Free-look doesn't carry over between ground-mode sessions - re-entering always starts
     // from the neutral base framing, not wherever a previous visit happened to leave it tilted.
     this.lookYaw = 0;
@@ -252,12 +260,15 @@ export class RtsGroundCamera {
   }
 
   private onWheel(e: WheelEvent): void {
-    const next = this.eyeHeight + Math.sign(e.deltaY) * ZOOM_SPEED;
-    if (next > MAX_EYE_HEIGHT && this.eyeHeight >= MAX_EYE_HEIGHT) {
+    // Same "compound onto the in-flight target, not the still-catching-up current value"
+    // approach as OrbitTrackballCamera.onWheel.
+    const base = this.targetEyeHeight ?? this.eyeHeight;
+    const next = base + Math.sign(e.deltaY) * ZOOM_SPEED;
+    if (next > MAX_EYE_HEIGHT && base >= MAX_EYE_HEIGHT) {
       this.requestExitToOrbit = true;
       return;
     }
-    this.eyeHeight = Math.min(MAX_EYE_HEIGHT, Math.max(MIN_EYE_HEIGHT, next));
+    this.targetEyeHeight = Math.min(MAX_EYE_HEIGHT, Math.max(MIN_EYE_HEIGHT, next));
   }
 
   /** Copies out the current working east/north (the persistent, parallel-transported base
@@ -290,6 +301,15 @@ export class RtsGroundCamera {
   }
 
   update(deltaSeconds: number, planetRadius: number): void {
+    if (this.targetEyeHeight !== null) {
+      const blend = 1 - Math.exp(-EYE_HEIGHT_LERP_RATE * deltaSeconds);
+      this.eyeHeight += (this.targetEyeHeight - this.eyeHeight) * blend;
+      if (Math.abs(this.targetEyeHeight - this.eyeHeight) < 0.25) {
+        this.eyeHeight = this.targetEyeHeight;
+        this.targetEyeHeight = null;
+      }
+    }
+
     if (this.keys.has(keybindings.get("groundRotateRight"))) this.heading += HEADING_ROTATE_SPEED * deltaSeconds;
     if (this.keys.has(keybindings.get("groundRotateLeft"))) this.heading -= HEADING_ROTATE_SPEED * deltaSeconds;
 
