@@ -20,6 +20,7 @@ import { computeLookRotationToRef } from "./camera/lookRotation";
 import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor } from "./solarSystem/scale";
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
+import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI } from "./ui/selection";
 import { SettingsMenu } from "./ui/settingsMenu";
 import { keybindings } from "./input/keybindings";
@@ -109,7 +110,7 @@ async function main() {
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
   const heightmapImages = await preloadHeightmaps(engine.getCaps().maxTextureSize);
-  const solarSystem = new SolarSystem(scene, heightmapImages);
+  const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages);
   let focused = solarSystem.focused;
   let thresholds = radiusThresholds(focused.radius);
 
@@ -122,6 +123,10 @@ async function main() {
   groundCamera.camera.parent = focused.orbit.spinNode;
 
   const freeFlyCamera = new FreeFlyCamera(scene, canvas, FAR_CLIP);
+
+  // Tracks orbitCamera.camera.position by reference (the same Vector3 object the transit code
+  // below mutates every frame via LerpToRef, never reassigned) - see StellarDust's doc comment.
+  const stellarDust = new StellarDust(scene, orbitCamera.camera.position);
 
   let mode: "orbit" | "ground" = "orbit";
   let freeCamActive = false;
@@ -321,6 +326,8 @@ async function main() {
   const tmpLocalViewDir = new Vector3();
   const tmpLocalUp = new Vector3();
   const tmpFreeCamLocalPos = new Vector3();
+  const tmpTransitDustMatrix = new Matrix();
+  const tmpTransitDustDir = new Vector3();
 
   function beginTransit() {
     if (mode !== "orbit" || transiting || freeCamActive) return;
@@ -343,6 +350,12 @@ async function main() {
     transitTargetIndex = targetIndex;
     transitElapsed = 0;
     transiting = true;
+
+    // Streaks stream backward relative to the direction the camera is coasting toward - since
+    // it looks roughly toward where it's going throughout the flight (see the continuous
+    // "makes sense from the camera's perspective" transit design), that's just its own forward.
+    Vector3.TransformNormalToRef(Vector3.Forward(), Matrix.FromQuaternionToRef(transitFromRot, tmpTransitDustMatrix), tmpTransitDustDir);
+    stellarDust.start(tmpTransitDustDir);
   }
 
   function updateTransit(deltaSeconds: number) {
@@ -395,6 +408,7 @@ async function main() {
 
     orbitCamera.attach();
     transiting = false;
+    stellarDust.stop();
   }
 
   engine.runRenderLoop(() => {

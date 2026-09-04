@@ -1,5 +1,6 @@
 import { DirectionalLight, Scene, Vector3 } from "@babylonjs/core";
 import { Star } from "../environment/star";
+import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
 import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
@@ -13,15 +14,18 @@ function jitteredAxis(base: Vector3, rand: () => number, spread: number): Vector
   return base.add(jitter).normalize();
 }
 
-/** Owns the star, every CelestialBody, and the decorative asteroid belt. */
+/** Owns the star, every CelestialBody, the decorative asteroid belt, and the background starfield. */
 export class SolarSystem {
   readonly star: Star;
   readonly bodies: CelestialBody[];
   readonly belt: AsteroidBelt;
   focusedIndex: number;
 
-  constructor(scene: Scene, heightmapImages: Partial<Record<string, HeightmapImageData>> = {}) {
+  /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
+   * as close to "fixed at infinity" as the clipping range allows. */
+  constructor(scene: Scene, farClip: number, heightmapImages: Partial<Record<string, HeightmapImageData>> = {}) {
     this.star = new Star(scene, STAR_RADIUS);
+    new Starfield(scene, farClip * 0.95);
 
     const rand = mulberry32(777);
     const baseOrbitAxis = new Vector3(0.12, 0.98, 0.15).normalize();
