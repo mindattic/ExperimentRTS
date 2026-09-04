@@ -6,6 +6,7 @@ import { RtsGroundCamera } from "./camera/rtsGroundCamera";
 import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, sceneDistance } from "./solarSystem/scale";
+import { SelectionUI } from "./ui/selection";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const reorientButton = document.getElementById("reorientButton") as HTMLButtonElement;
@@ -55,6 +56,8 @@ async function main() {
 
   const groundCamera = new RtsGroundCamera(scene, canvas, focused.heightfield!);
   groundCamera.camera.parent = focused.orbit.spinNode;
+
+  const selectionUI = new SelectionUI(solarSystem, scene, engine, canvas);
 
   let mode: "orbit" | "ground" = "orbit";
   let escapePressed = false;
@@ -109,6 +112,8 @@ async function main() {
       }
     }
     escapePressed = false;
+
+    selectionUI.update();
 
     scene.render();
   });

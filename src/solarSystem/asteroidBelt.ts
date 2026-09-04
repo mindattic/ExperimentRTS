@@ -22,6 +22,7 @@ export class AsteroidBelt {
     material.specularColor = Color3.Black();
     rock.material = material;
     rock.parent = this.node;
+    rock.isPickable = false; // decorative only - not a selectable/landable CelestialBody
 
     const rand = mulberry32(seed);
     const matrices: Matrix[] = [];

@@ -9,6 +9,17 @@
   <body>
     <canvas id="renderCanvas"></canvas>
     <button id="reorientButton" type="button">Reorient</button>
+    <div id="focusList" class="focus-list" hidden>
+      <div class="focus-list-title">Focus</div>
+      <ol id="focusListItems"></ol>
+    </div>
+    <div id="reticle" class="reticle" hidden>
+      <span class="corner tl"></span>
+      <span class="corner tr"></span>
+      <span class="corner bl"></span>
+      <span class="corner br"></span>
+      <div id="reticleLabel" class="reticle-label"></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
