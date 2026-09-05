@@ -44,12 +44,13 @@ class GraphicsSettings {
    * depth is deliberately capped well below MAX_DEPTH - see FORCE_DETAIL_MAX_DEPTH's own comment
    * for why forcing the real max depth everywhere is computationally infeasible). */
   forceMaxTerrainDetail = false;
-  /** Ambient auto-relevel strength for OrbitTrackballCamera's roll, 0-1: 0 (default) means the
-   * camera only ever re-levels via the explicit reorient hotkey (this session's original
-   * behavior, unchanged); 1 snaps to level every frame (effectively instant); values in between
-   * blend toward level continuously at a rate scaled by this value. Independent of (and stacks
-   * harmlessly with) the hotkey's own one-shot reorient(). */
-  reorientationStrength = 0;
+  /** Ambient auto-relevel strength for OrbitTrackballCamera's roll, 0-1: 0 means the camera only
+   * ever re-levels via the explicit reorient hotkey; 1 snaps to level every frame (effectively
+   * instant); values in between blend toward level continuously at a rate scaled by this value.
+   * Independent of (and stacks harmlessly with) the hotkey's own one-shot reorient(). Defaults on
+   * ("turn on automatic reorient slowly") at a low, gentle value rather than off - "0 is
+   * obviously off" is reserved for someone deliberately disabling it via the settings slider. */
+  reorientationStrength = 0.06;
 
   constructor() {
     this.load();

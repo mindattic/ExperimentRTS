@@ -548,6 +548,11 @@ body {
   box-shadow: 0 0 4px rgba(207, 216, 255, 0.9);
 }
 
+/* Within 1 AU the real body is already visible - only the always-on label persists there. */
+.body-icon-close .body-icon-dot {
+  display: none;
+}
+
 .body-icon-label {
   font-family: system-ui, sans-serif;
   font-size: 11px;
@@ -569,11 +574,10 @@ body {
   top: 0;
   left: 0;
   /* translate(x, y) (screen edge point) translate(-50%, -50%) (center on it) - set entirely by
-     JS each frame, same convention as .body-icon's own transform. */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+     JS each frame, same convention as .body-icon's own transform. Glyph and label below are
+     each independently absolutely-positioned within this container (see their own transforms)
+     rather than laid out with flex, so the label can stay pinned to the arrow's base edge as it
+     rotates instead of drifting - a flex-column layout doesn't know about the glyph's rotation. */
 }
 
 .offscreen-indicator[hidden] {
@@ -581,22 +585,34 @@ body {
 }
 
 .offscreen-indicator-glyph {
-  /* A solid triangle pointing straight up by default - rotated per-frame in JS to point toward
-     the target. Border-triangle trick: a zero-size box whose only visible parts are its
-     angled borders. */
+  /* A single ISOSCELES triangle (narrow base, tall height - not the previous roughly-equilateral
+     one, which read as too short/stubby), pointing straight up by default - rotated per-frame in
+     JS (translate(-50%,-50%) rotate(angle), see offscreenIndicators.ts) to point toward the
+     target. Border-triangle trick: a zero-size box whose only visible parts are its angled
+     borders. `color` is set inline per-body (see OffscreenIndicatorUI) to match that body's own
+     orbit line - border-bottom-color below inherits it via currentColor. */
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 0;
   height: 0;
-  border-left: 7px solid transparent;
-  border-right: 7px solid transparent;
-  border-bottom: 13px solid #ffcf6b;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 22px solid currentColor;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
 }
 
 .offscreen-indicator-label {
+  /* Positioned per-frame in JS (translate(-50%,-50%) translate(baseX, baseY), see
+     offscreenIndicators.ts) offset from center toward the arrow's base/trailing side - never
+     rotated itself, so the text always reads perfectly horizontally regardless of which way the
+     arrow points ("label should be pinned to base but printed perfectly horizontally"). */
+  position: absolute;
+  top: 0;
+  left: 0;
   font-family: system-ui, sans-serif;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  color: #ffcf6b;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
   white-space: nowrap;
 }

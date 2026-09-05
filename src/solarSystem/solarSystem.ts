@@ -18,8 +18,10 @@ function jitteredAxis(base: Vector3, rand: () => number, spread: number): Vector
 
 /** Deterministic per-body orbit-line color, keyed off the body's own procedural-terrain seed
  * (already a unique per-body number) so every orbit reads as visually distinct rather than one
- * indistinguishable gray loop for the whole system - full saturation/value, only hue varies. */
-function orbitLineColorFor(seed: number): Color3 {
+ * indistinguishable gray loop for the whole system - full saturation/value, only hue varies.
+ * Exported so other per-body UI (e.g. OffscreenIndicatorUI's arrows) can match a body's own
+ * orbit line color exactly, not just look similar. */
+export function orbitLineColorFor(seed: number): Color3 {
   const hue = mulberry32(seed * 7919 + 13)() * 360;
   return Color3.FromHSV(hue, 0.55, 0.95);
 }

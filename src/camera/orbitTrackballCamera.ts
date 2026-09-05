@@ -480,10 +480,14 @@ export class OrbitTrackballCamera {
       let keyYaw = 0;
       let keyPitch = 0;
       let keyRoll = 0;
-      if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
-      if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
-      if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
-      if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
+      // Reversed from the keybinding's own literal name ("left should be right, up should be
+      // down") - orbitYawRight/orbitPitchUp etc. still name the physical WASD key bound to each
+      // action (see keybindings.ts), just inverted here so the resulting rotation direction
+      // matches what actually feels correct, rather than what the label alone would suggest.
+      if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw -= 1;
+      if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw += 1;
+      if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch -= 1;
+      if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch += 1;
       if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
       if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
       if (keyYaw !== 0 || keyPitch !== 0) {

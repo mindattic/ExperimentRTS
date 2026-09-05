@@ -1,4 +1,4 @@
-import { Mesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
+import { Color3, Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
 import type { Dockable } from "./dockable";
 import type { ShipDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
@@ -72,6 +72,11 @@ export class Ship {
   private readonly plannedQPrograde = new Quaternion();
   private readonly plannedQRetrograde = new Quaternion();
   private trajectoryLine: LinesMesh | null = null;
+  /** Shared across every trajectory line this ship ever creates (a ship's faction/accent color
+   * never changes) - created once in the constructor rather than fresh in departNext() each
+   * time, since Mesh.dispose() doesn't dispose its material by default and this ship departs
+   * many times over a session. */
+  private readonly trajectoryMaterial: StandardMaterial;
   /** Desired visibility for the NEXT trajectory line created (departNext) - see
    * setTrajectoryVisible(). Defaults to graphicsSettings.showShipTrajectories's value at
    * construction; EconomyManager keeps every ship's flag in sync as the setting changes live. */
@@ -103,6 +108,20 @@ export class Ship {
     this.iconMesh.material = createShipIconMaterial(scene, def.faction);
     this.iconMesh.parent = this.root;
     this.iconMesh.setEnabled(false);
+
+    // LinesMesh's own default shader material has no logarithmic-depth support - at this scene's
+    // huge near/far ratio that drew a ship's trajectory in front of/behind planets in the wrong
+    // order ("ship lines aren't ordered right") - same fix already used for orbit lines (see
+    // CelestialOrbit.createOrbitLine's own comment) and asteroids/stations (hullTexture.ts) - a
+    // plain unlit StandardMaterial gets both logarithmic depth and correct alpha blending for free.
+    this.trajectoryMaterial = new StandardMaterial(`${def.id}TrajectoryMaterial`, scene);
+    this.trajectoryMaterial.emissiveColor = FACTION_PALETTES[def.faction].accent;
+    this.trajectoryMaterial.diffuseColor = Color3.Black();
+    this.trajectoryMaterial.specularColor = Color3.Black();
+    this.trajectoryMaterial.disableLighting = true;
+    this.trajectoryMaterial.alpha = 0.5;
+    this.trajectoryMaterial.useLogarithmicDepth = true;
+    this.trajectoryMaterial.backFaceCulling = false;
 
     // Plans its very first departure too, exactly like every subsequent one arrive() plans -
     // dwellRemaining (not def.dwellSeconds) is the actual lead time until it happens.
@@ -206,8 +225,15 @@ export class Ship {
       { points: [this.profile.from, this.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
       this.scene,
     );
-    this.trajectoryLine.color = FACTION_PALETTES[this.def.faction].accent;
-    this.trajectoryLine.alpha = 0.5;
+    // LinesMesh's own default shader material has no logarithmic-depth support - at this scene's
+    // huge near/far ratio that drew a ship's trajectory in front of/behind planets in the wrong
+    // order ("ship lines aren't ordered right") - same fix already used for orbit lines (see
+    // CelestialOrbit.createOrbitLine's own comment) and asteroids/stations (hullTexture.ts) - a
+    // plain unlit StandardMaterial gets both logarithmic depth and correct alpha blending for
+    // free. Reuses the one shared trajectoryMaterial created in the constructor rather than a
+    // fresh one each departure - Mesh.dispose() doesn't dispose its material by default, and a
+    // ship departs many times over a session.
+    this.trajectoryLine.material = this.trajectoryMaterial;
     this.trajectoryLine.isPickable = false;
     this.trajectoryLine.setEnabled(this.trajectoryVisible);
   }

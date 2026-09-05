@@ -80,9 +80,10 @@ const DEFAULTS: Record<Action, string> = {
   travel: "Space",
   exitGround: "Escape",
   toggleLabels: "KeyL",
-  // Shares KeyF with freeCam - safe because freeCam's own toggle only fires when FREE_CAM_ONLY
-  // is off (see main.ts), same "one physical key, mode-gated behaviors" pattern as above. Needs
-  // a double-tap (not a single press) to fire - see main.ts's ENTER_FOCUS_DOUBLE_TAP_MS.
+  // Shares KeyF with freeCam - safe because freeCam's own toggle is suppressed while in free cam
+  // with something selected (see main.ts's keydown handler), same "one physical key, mode-gated
+  // behaviors" pattern as above. Needs a double-tap (not a single press) to fire - see main.ts's
+  // ENTER_FOCUS_DOUBLE_TAP_MS.
   enterOrbit: "KeyF",
   toggleOrbitalScale: "Backquote",
 };

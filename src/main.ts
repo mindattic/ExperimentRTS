@@ -224,7 +224,6 @@ async function main() {
       if (mode === "orbitEntity") return selectionUI.selectedEntity?.name ?? null;
       return null;
     },
-    () => (!freeCamActive && !transiting && mode === "orbit" ? solarSystem.focused : null),
     () => freeFlyCamera.isCursorModeActive,
     () => economyManager,
     () => transiting,
@@ -252,7 +251,16 @@ async function main() {
       travelPressed = true;
     }
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
-    if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
+    // Shares KeyF with enterOrbit (see below) - while in free cam with something selected, F is
+    // reserved entirely for the double-tap-to-commit gesture; toggling free cam off on the FIRST
+    // tap (then back on for the second) corrupted the free-fly camera's pose (it gets reset to
+    // wherever orbit mode's "off" branch parks it, then re-captured from there) instead of
+    // actually starting the commit flight from free cam's real position. Once nothing's selected,
+    // or once a commit has actually happened (freeCamActive false), F goes back to being a plain
+    // toggle.
+    if (e.code === keybindings.get("freeCam") && !(freeCamActive && (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null))) {
+      freeCamTogglePressed = true;
+    }
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
     if (e.code === keybindings.get("toggleOrbitalScale") && !e.repeat) orbitalScaleTogglePressed = true;
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
@@ -936,8 +944,14 @@ async function main() {
 
     if (enterOrbitPressed && freeCamActive && !transiting) {
       if (selectionUI.targetIndex !== null) {
-        enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+        // Same warp/fly-in as double-clicking the body ("F is the same as double click, it
+        // zooms to selected object") rather than an instant view-blend from wherever free cam
+        // already happens to be - double-tap-F and double-click are the two ways to trigger the
+        // exact same "commit to focus mode" action, so they should look identical too.
+        beginFreeCamZoomTo(solarSystem.bodies[selectionUI.targetIndex]);
       } else if (selectionUI.selectedEntity !== null) {
+        // No warp-flight equivalent exists for a moving ship/asteroid target (see
+        // enterOrbitEntityFromFreeCam's own comment) - stays an instant blend.
         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
       }
     }

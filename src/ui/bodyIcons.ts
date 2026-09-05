@@ -5,12 +5,13 @@ import { AU_IN_SCENE_UNITS } from "../solarSystem/scale";
 const tmpIdentity = Matrix.Identity(); // world matrix for Project() - bodies' positions are already in world space
 
 /**
- * Small clickable billboard icon + name label for each body, shown only once it's farther than
- * 1 AU from the camera - "I still havent seen any billboard sprites to show you planets and
+ * Small clickable billboard icon + name label for every body currently on screen - "put labels
+ * on all planets all the time". The dot marker itself only shows once a body is farther than 1
+ * AU from the camera, though - "I still havent seen any billboard sprites to show you planets and
  * objects more than 1 AU away ... so I can see Venus, Mars, Earth all as icons when I'm way out
- * by Jupiter". A real 3D body is already visually negligible at that range (its actual angular
- * size on screen is sub-pixel at typical body radii vs multi-AU viewing distances), so this
- * doesn't bother hiding the real mesh underneath - just overlays a marker on top of it.
+ * by Jupiter" - a real 3D body is already visually negligible at that range (its actual angular
+ * size on screen is sub-pixel at typical body radii vs multi-AU viewing distances), so the dot
+ * stands in for it; up close the real mesh is already right there, so only the label persists.
  *
  * Reuses the same screen-space DOM-overlay technique as the selection reticle/hover label
  * (project world position -> screen, position a plain HTML element there) rather than a Babylon
@@ -68,11 +69,6 @@ export class BodyIconsUI {
     for (let i = 0; i < this.solarSystem.bodies.length; i++) {
       const el = this.icons[i];
       const worldPos = this.solarSystem.bodies[i].orbit.spinNode.getAbsolutePosition();
-      const distance = Vector3.Distance(camPos, worldPos);
-      if (distance <= AU_IN_SCENE_UNITS) {
-        el.hidden = true;
-        continue;
-      }
 
       // Same robust "in front of the camera" check as the selection reticle - projected clip
       // space z alone isn't reliable for this (see SelectionUI's own comment).
@@ -89,6 +85,11 @@ export class BodyIconsUI {
       }
 
       el.hidden = false;
+      // Only the dot stands in for the real body once it's too far away to see - up close the
+      // actual mesh is already visible, so showing the dot too would just be a redundant marker
+      // floating in front of it.
+      const distance = Vector3.Distance(camPos, worldPos);
+      el.classList.toggle("body-icon-close", distance <= AU_IN_SCENE_UNITS);
       el.style.transform = `translate(${screenPos.x}px, ${screenPos.y}px) translate(-50%, -50%)`;
     }
   }

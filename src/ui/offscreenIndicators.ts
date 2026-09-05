@@ -1,8 +1,17 @@
 import { Matrix, Vector3, type AbstractEngine, type Scene } from "@babylonjs/core";
-import type { SolarSystem } from "../solarSystem/solarSystem";
+import { orbitLineColorFor, type SolarSystem } from "../solarSystem/solarSystem";
 
 /** Kept off the very edge of the viewport so the arrow's own size doesn't get clipped. */
 const EDGE_MARGIN_PX = 28;
+/** Matches the arrow glyph's own alpha (see the CSS) - applied here too since the label's color
+ * is set inline per-body and can't just inherit the CSS rule's opacity/color the glyph uses.
+ * "80% transparent" = 0.2 alpha (20% opaque). */
+const ARROW_ALPHA = 0.2;
+/** Distance in px from the glyph's own center to the label's anchor point, on the arrow's
+ * base/trailing side (opposite the direction it points) - "label should be pinned to base".
+ * Just past the triangle's own half-height (11px, see .offscreen-indicator-glyph's border-bottom)
+ * plus a small gap. */
+const LABEL_OFFSET_PX = 16;
 
 const tmpIdentity = Matrix.Identity(); // world matrix for Project() - bodies' positions are already in world space
 const tmpToBody = new Vector3();
@@ -37,14 +46,23 @@ export class OffscreenIndicatorUI {
 
     const layerEl = document.getElementById("offscreenIndicatorLayer")!;
     for (const body of solarSystem.bodies) {
+      // Same per-body color as this body's own orbit line (orbitLineColorFor is keyed off the
+      // same seed) - "change arrow colors to match orbit line color" - applied to both the
+      // glyph and the label (a plain CSS color/border-color can't reach a color picked
+      // per-element like this, so it's set inline here once rather than every frame).
+      const color = orbitLineColorFor(body.def.seed);
+      const rgba = `rgba(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)}, ${ARROW_ALPHA})`;
+
       const el = document.createElement("div");
       el.className = "offscreen-indicator";
       el.hidden = true;
       const glyph = document.createElement("span");
       glyph.className = "offscreen-indicator-glyph";
+      glyph.style.color = rgba; // border-bottom-color inherits this via currentColor
       const label = document.createElement("span");
       label.className = "offscreen-indicator-label";
       label.textContent = body.def.name;
+      label.style.color = rgba;
       el.appendChild(glyph);
       el.appendChild(label);
       layerEl.appendChild(el);
@@ -98,10 +116,27 @@ export class OffscreenIndicatorUI {
       const edgeX = dx * scale;
       const edgeY = dy * scale;
       const angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 = up, clockwise - matches the glyph's default pointing-up orientation
+      const rad = (angleDeg * Math.PI) / 180;
+      // Unit vector the arrow points toward (screen space, 0deg = up = (0,-1)) - the label sits
+      // on the OPPOSITE side (the base/trailing side), never rotated itself, so it stays
+      // horizontal while still tracking the arrow's rotation ("pinned to base but printed
+      // perfectly horizontally").
+      const tipX = Math.sin(rad);
+      const tipY = -Math.cos(rad);
+      const baseX = -tipX * LABEL_OFFSET_PX;
+      const baseY = -tipY * LABEL_OFFSET_PX;
+      // Anchor the label's own near corner (not its center) at the base point, so it always
+      // extends AWAY from the glyph rather than straddling it - centering here would let long
+      // names overlap/hide behind the triangle on left/up-pointing arrows.
+      const anchorX = baseX >= 0 ? "0%" : "-100%";
+      const anchorY = baseY >= 0 ? "0%" : "-100%";
 
       el.hidden = false;
       el.style.transform = `translate(${width / 2 + edgeX}px, ${height / 2 + edgeY}px) translate(-50%, -50%)`;
-      (el.firstElementChild as HTMLElement).style.transform = `rotate(${angleDeg}deg)`;
+      const glyph = el.firstElementChild as HTMLElement;
+      const label = el.lastElementChild as HTMLElement;
+      glyph.style.transform = `translate(-50%, -50%) rotate(${angleDeg}deg)`;
+      label.style.transform = `translate(${anchorX}, ${anchorY}) translate(${baseX}px, ${baseY}px)`;
     }
   }
 }
