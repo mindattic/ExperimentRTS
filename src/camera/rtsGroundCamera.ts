@@ -2,6 +2,7 @@ import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/
 import type { PlanetHeightfield } from "../terrain/heightfield";
 import { keybindings } from "../input/keybindings";
 import { computeLookRotationToRef } from "./lookRotation";
+import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./pathAvoidance";
 
 const PAN_SPEED = 220; // units/sec at planet-surface scale
 const MIN_EYE_HEIGHT = 30;
@@ -143,6 +144,10 @@ export class RtsGroundCamera {
   /** Computed once, lazily, on the blend's first update() call (see there) - null beforehand,
    * since the actual target position (needed to measure distance) isn't known until then. */
   private blendDurationSeconds: number | null = null;
+  /** Obstacles to detour around during the entry blend - see attach()'s obstacles param. */
+  private blendObstacles: readonly PathObstacle[] = [];
+  /** Lazily computed alongside blendDurationSeconds - see OrbitTrackballCamera's own field. */
+  private blendControlPoint: Vector3 | null = null;
 
   constructor(scene: Scene, canvas: HTMLCanvasElement, heightfield: PlanetHeightfield) {
     this.canvas = canvas;
@@ -162,8 +167,10 @@ export class RtsGroundCamera {
    * orbit -> ground mode handoff and a direct free-cam -> ground jump into a real camera
    * movement rather than a cut. Also resets eyeHeight to its max so the handoff reads as a
    * continuation of the zoom/flight that triggered it, not a jump to a close-up view.
+   * @param obstacles Other bodies to detour around if the straight-line path would pass through
+   * one - see pathAvoidance.ts. Pass every body except whichever this ground session is on.
    */
-  attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion): void {
+  attach(fromWorldPosition?: Vector3, fromRotation?: Quaternion, obstacles: readonly PathObstacle[] = []): void {
     this.requestExitToOrbit = false;
     this.eyeHeight = MAX_EYE_HEIGHT;
     this.targetEyeHeight = null;
@@ -178,6 +185,8 @@ export class RtsGroundCamera {
       this.blendStartRot = fromRotation.clone();
       this.blendElapsed = 0;
       this.blendDurationSeconds = null;
+      this.blendObstacles = obstacles;
+      this.blendControlPoint = null;
     } else {
       this.blendStartPos = null;
       this.blendStartRot = null;
@@ -445,15 +454,17 @@ export class RtsGroundCamera {
         // of cramming a huge distance into the same fixed duration that a short hop uses.
         const distance = Vector3.Distance(this.blendStartPos, tmpTargetPos);
         this.blendDurationSeconds = Math.min(ENTRY_BLEND_MAX_SECONDS, Math.max(ENTRY_BLEND_MIN_SECONDS, distance / ENTRY_BLEND_SPEED));
+        this.blendControlPoint = computeDetourControlPoint(this.blendStartPos, tmpTargetPos, this.blendObstacles);
       }
       this.blendElapsed += deltaSeconds;
       const t = easeOutCubic(Math.min(1, this.blendElapsed / this.blendDurationSeconds));
-      Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
+      evaluateDetourPath(this.blendStartPos, this.blendControlPoint!, tmpTargetPos, t, this.camera.position);
       Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
       if (t >= 1) {
         this.blendStartPos = null;
         this.blendStartRot = null;
         this.blendDurationSeconds = null;
+        this.blendControlPoint = null;
       }
     } else {
       this.camera.position.copyFrom(tmpTargetPos);

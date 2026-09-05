@@ -2,6 +2,7 @@ import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/
 import { keybindings } from "../input/keybindings";
 import { computeLookRotationToRef } from "./lookRotation";
 import { graphicsSettings } from "../settings/graphicsSettings";
+import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./pathAvoidance";
 
 const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
 const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
@@ -65,6 +66,12 @@ export class OrbitTrackballCamera {
   /** Lazily computed on the blend's first update() frame, same pattern as RtsGroundCamera's own -
    * see there for why (the actual target position isn't known until then). */
   private blendDurationSeconds: number | null = null;
+  /** Obstacles to detour around during the entry blend (see enterFromWorldPose) - typically
+   * every other body in the system except whichever one this orbit is entering/leaving. */
+  private blendObstacles: readonly PathObstacle[] = [];
+  /** Lazily computed alongside blendDurationSeconds - a plain midpoint (degenerating to a
+   * straight line) if the direct path doesn't pass through any obstacle. */
+  private blendControlPoint: Vector3 | null = null;
   /** When set, added to the local viewDir*radius offset each frame instead of relying on
    * camera.parent to carry a moving anchor - for orbiting something that translates but has no
    * rotating "surface frame" worth inheriting the way a planet's spinNode has (a ship, or an
@@ -178,12 +185,16 @@ export class OrbitTrackballCamera {
    * RtsGroundCamera's own attach(fromWorldPosition, fromRotation) entry blend. Call update(0)
    * right after to seed camera.position/rotationQuaternion at the blend's t=0 start (exactly
    * `fromPosition`/`fromRotation`) instead of leaving them at whatever stale pose the camera had
-   * before. */
-  enterFromWorldPose(fromPosition: Vector3, fromRotation: Quaternion): void {
+   * before.
+   * @param obstacles Other bodies to detour around if the straight-line path would pass through
+   * one - see pathAvoidance.ts. Pass every body except whichever this orbit is entering/leaving. */
+  enterFromWorldPose(fromPosition: Vector3, fromRotation: Quaternion, obstacles: readonly PathObstacle[] = []): void {
     this.blendStartPos = fromPosition.clone();
     this.blendStartRot = fromRotation.clone();
     this.blendElapsed = 0;
     this.blendDurationSeconds = null;
+    this.blendObstacles = obstacles;
+    this.blendControlPoint = null;
   }
 
   /** Starts (or stops, if null) tracking a moving world position each frame instead of the
@@ -409,15 +420,17 @@ export class OrbitTrackballCamera {
       if (this.blendDurationSeconds === null) {
         const distance = Vector3.Distance(this.blendStartPos, tmpTargetPos);
         this.blendDurationSeconds = Math.min(ENTRY_BLEND_MAX_SECONDS, Math.max(ENTRY_BLEND_MIN_SECONDS, distance / ENTRY_BLEND_SPEED));
+        this.blendControlPoint = computeDetourControlPoint(this.blendStartPos, tmpTargetPos, this.blendObstacles);
       }
       this.blendElapsed += deltaSeconds;
       const t = easeOutCubic(Math.min(1, this.blendElapsed / this.blendDurationSeconds));
-      Vector3.LerpToRef(this.blendStartPos, tmpTargetPos, t, this.camera.position);
+      evaluateDetourPath(this.blendStartPos, this.blendControlPoint!, tmpTargetPos, t, this.camera.position);
       Quaternion.SlerpToRef(this.blendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
       if (t >= 1) {
         this.blendStartPos = null;
         this.blendStartRot = null;
         this.blendDurationSeconds = null;
+        this.blendControlPoint = null;
       }
     } else {
       this.camera.position.copyFrom(tmpTargetPos);

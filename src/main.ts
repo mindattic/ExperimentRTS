@@ -17,6 +17,7 @@ import { RtsGroundCamera } from "./camera/rtsGroundCamera";
 import { OrbitTrackballCamera } from "./camera/orbitTrackballCamera";
 import { FreeFlyCamera } from "./camera/freeFlyCamera";
 import { computeLookRotationToRef } from "./camera/lookRotation";
+import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./camera/pathAvoidance";
 import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
@@ -380,6 +381,17 @@ async function main() {
     }
   }
 
+  /** Every body (plus the star) except the named ones, as detour obstacles for a camera blend -
+   * see pathAvoidance.ts. Excludes whichever body/bodies the blend is actually entering/leaving,
+   * since those are the deliberate start/end points, not something to route around. */
+  function otherBodyObstacles(...excludeNames: string[]): PathObstacle[] {
+    const obstacles: PathObstacle[] = solarSystem.bodies
+      .filter((body) => !excludeNames.includes(body.def.name))
+      .map((body) => ({ position: body.orbit.spinNode.getAbsolutePosition().clone(), radius: body.radius * FREE_CAM_COLLIDER_FACTOR }));
+    obstacles.push({ position: Vector3.Zero(), radius: STAR_RADIUS * FREE_CAM_COLLIDER_FACTOR });
+    return obstacles;
+  }
+
   const tmpCatchDir = new Vector3();
   const tmpCatchFromRot = new Quaternion();
 
@@ -424,7 +436,7 @@ async function main() {
     orbitCamera.resetView(tmpLocalViewDir);
     orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, dist)));
     orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
-    orbitCamera.enterFromWorldPose(camPos, tmpCatchFromRot);
+    orbitCamera.enterFromWorldPose(camPos, tmpCatchFromRot, otherBodyObstacles(target.def.name));
     // Seeds camera.position/rotationQuaternion at the blend's t=0 start (exactly free cam's last
     // pose) immediately, rather than staying at their stale pre-free-cam values for one visible
     // frame until the next regular orbitCamera.update() call (which won't happen until next
@@ -468,7 +480,7 @@ async function main() {
     orbitCamera.setRadiusLimits(ENTITY_ORBIT_MIN_RADIUS, ENTITY_ORBIT_MAX_RADIUS);
     orbitCamera.setRadius(ENTITY_ORBIT_DEFAULT_RADIUS);
     orbitCamera.resetView(new Vector3(0, 0.35, 1)); // arbitrary reasonable starting angle, same default used elsewhere
-    orbitCamera.enterFromWorldPose(camPos, camRot);
+    orbitCamera.enterFromWorldPose(camPos, camRot, otherBodyObstacles());
     orbitCamera.update(0); // seed position/rotation at the blend's t=0 start immediately - see enterOrbitFromFreeCam's own comment
 
     scene.activeCamera = orbitCamera.camera;
@@ -513,7 +525,7 @@ async function main() {
     orbitCamera.setRadius(targetThresholds.defaultOrbit);
 
     scene.activeCamera = groundCamera.camera;
-    groundCamera.attach(fromPos, fromRot);
+    groundCamera.attach(fromPos, fromRot, otherBodyObstacles(target.def.name));
     mode = "ground";
   }
 
@@ -537,6 +549,7 @@ async function main() {
   const tmpFreeCamLocalPos = new Vector3();
   const tmpTransitDustMatrix = new Matrix();
   const tmpTransitDustDir = new Vector3();
+  let transitControlPoint: Vector3 | null = null;
 
   function beginTransit() {
     if (mode !== "orbit" || transiting || freeCamActive) return;
@@ -559,6 +572,18 @@ async function main() {
     transitTargetIndex = targetIndex;
     transitElapsed = 0;
     transiting = true;
+
+    // Computed once up front (not lazily like the other two blend systems) since transit's
+    // duration is always the same fixed TRANSIT_DURATION_SECONDS regardless of distance, so
+    // there's no need to wait for a first update() frame - an initial estimate of the arrival
+    // point (the target's current position, ignoring its own slow drift during the flight) is
+    // already good enough to route around anything genuinely in the way.
+    const target = solarSystem.bodies[targetIndex];
+    const targetThresholds = radiusThresholds(target.radius);
+    const estimatedArrivalPos = target.orbit.spinNode
+      .getAbsolutePosition()
+      .add(transitApproachDir.scale(targetThresholds.defaultOrbit));
+    transitControlPoint = computeDetourControlPoint(transitFromPos, estimatedArrivalPos, otherBodyObstacles(focused.def.name, target.def.name));
 
     // Streaks stream backward relative to the direction the camera is coasting toward - since
     // it looks roughly toward where it's going throughout the flight (see the continuous
@@ -583,7 +608,7 @@ async function main() {
     computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
 
     const camera = orbitCamera.camera;
-    Vector3.LerpToRef(transitFromPos, tmpArrivalPos, eased, camera.position);
+    evaluateDetourPath(transitFromPos, transitControlPoint!, tmpArrivalPos, eased, camera.position);
     Quaternion.SlerpToRef(transitFromRot, tmpArrivalRot, eased, camera.rotationQuaternion!);
 
     if (t >= 1) completeTransit(target, targetThresholds);
