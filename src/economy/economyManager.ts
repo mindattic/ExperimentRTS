@@ -67,6 +67,7 @@ export class EconomyManager {
    * needs the camera's true world position regardless of which mode/camera is currently active. */
   update(deltaSeconds: number, cameraWorldPosition: Vector3): void {
     for (const ship of this.ships) ship.update(deltaSeconds, cameraWorldPosition, this.resolveStop);
+    for (const station of this.stations) station.update(deltaSeconds);
   }
 
   /** Everything ExamineUI can show a placard for - the UI class never needs to know about

@@ -1,4 +1,4 @@
-import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
+import { Color3, Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import { CelestialOrbit } from "../solarSystem/celestialOrbit";
 import { spinPeriodSeconds } from "../solarSystem/scale";
@@ -8,6 +8,9 @@ import { FACTION_PALETTES } from "./factions";
 import type { ExaminableInfo } from "../ui/examineUI";
 
 const tmpParentPos = new Vector3();
+const tmpRadialDir = new Vector3();
+const tmpSpinRot = new Quaternion();
+const tmpFaceRot = new Quaternion();
 
 const materialCache = new Map<string, StandardMaterial>();
 
@@ -46,11 +49,18 @@ const STATION_SPIN_SECONDS = 90;
  * duplicating any of that in a bespoke "simple circular orbit" class.
  *
  * Ships routing through a station "pass through the ring" as a visual/flight-path detail only -
- * not a mandatory chokepoint. The torus is rotated 90 degrees off CreateTorus's default (hole
- * along local Y) so the hole instead faces horizontally - a ring leading to and from the planet,
- * not lying flat like a table. No orbit line: unlike a moon or planet, a geosynchronous station
- * doesn't have a meaningfully different position to trace - it's always over the same point on
- * the surface, so a drawn ellipse would just be visual clutter with nothing distinct to show.
+ * not a mandatory chokepoint. The mesh is parented to orbitNode (not spinNode, unlike every
+ * other CelestialOrbit user) and its own update() recomputes rotationQuaternion every frame
+ * instead: the torus's hole (local Y, CreateTorus's default) is kept pointed at the planet's
+ * center at all times - "the mouth must always be facing the center of the planet" - which a
+ * fixed one-time rotation can't do for a body that keeps orbiting (its position relative to the
+ * planet still traces the same circle regardless of the orbit being geosynchronous, and
+ * spinNode's generic spin mechanism can't track that without a moving spinAxis). The decorative
+ * "slow rotating wheel" spin still happens, just around that same radial axis instead - a torus
+ * is rotationally symmetric about its own hole axis, so spinning it there never changes which
+ * way it faces. No orbit line: unlike a moon or planet, a geosynchronous station doesn't have a
+ * meaningfully different position to trace - it's always over the same point on the surface, so
+ * a drawn ellipse would just be visual clutter with nothing distinct to show.
  */
 export class Station implements Dockable {
   readonly id: string;
@@ -58,6 +68,7 @@ export class Station implements Dockable {
   readonly orbit: CelestialOrbit;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
+  private spinAngle = Math.random() * Math.PI * 2; // random phase so every station's ring doesn't spin in lockstep
 
   constructor(scene: Scene, def: StationDef, parentBody: CelestialBody) {
     this.id = def.id;
@@ -70,6 +81,9 @@ export class Station implements Dockable {
       eccentricity: 0,
       orbitPeriodSeconds: spinPeriodSeconds(parentBody.def),
       orbitAxis: Vector3.Up(),
+      // spinNode's own spin is unused here (see the class doc comment - the mesh is parented to
+      // orbitNode instead, and update() drives its rotation directly), so these are just
+      // harmless placeholders to satisfy CelestialOrbitOptions.
       spinPeriodSeconds: STATION_SPIN_SECONDS,
       spinAxis: Vector3.Up(),
       startAngle: Math.random() * Math.PI * 2,
@@ -83,11 +97,26 @@ export class Station implements Dockable {
     const outerRadius = Math.max(20, parentBody.radius * 0.05);
     this.mesh = MeshBuilder.CreateTorus(`${def.id}Mesh`, { diameter: outerRadius * 2, thickness: outerRadius * 0.28, tessellation: 24 }, scene);
     this.mesh.material = createStationMaterial(scene, def);
-    this.mesh.parent = this.orbit.spinNode;
-    // CreateTorus's default orientation lies the ring flat (hole along local Y) - rotated 90
-    // degrees around Z so the hole instead faces horizontally, reading as a ring leading to and
-    // from the planet rather than a flat table sitting in orbit.
-    this.mesh.rotation.z = Math.PI / 2;
+    // Parented to orbitNode, not spinNode (see the class doc comment) - update() computes its
+    // rotationQuaternion directly every frame instead of relying on CelestialOrbit's generic
+    // fixed-axis spin.
+    this.mesh.parent = this.orbit.orbitNode;
+    this.mesh.rotationQuaternion = new Quaternion();
+    this.update(0);
+  }
+
+  /** Keeps the torus's hole (local Y) pointed at the planet's center every frame - see the class
+   * doc comment for why this can't be a fixed one-time rotation - while still applying a slow
+   * decorative spin around that same radial axis (harmless: a torus is rotationally symmetric
+   * about its own hole axis, so this never changes which way it faces). */
+  update(deltaSeconds: number): void {
+    this.spinAngle += deltaSeconds * ((2 * Math.PI) / STATION_SPIN_SECONDS);
+    // orbitNode.position is this station's offset from the planet's own orbitNode origin (its
+    // parent - see the constructor) - negating and normalizing it points back at the planet.
+    tmpRadialDir.copyFrom(this.orbit.orbitNode.position).normalize().scaleInPlace(-1);
+    Quaternion.RotationAxisToRef(Vector3.Up(), this.spinAngle, tmpSpinRot); // spin around local Y first...
+    Quaternion.FromUnitVectorsToRef(Vector3.Up(), tmpRadialDir, tmpFaceRot); // ...then reorient Y to face the planet
+    tmpFaceRot.multiplyToRef(tmpSpinRot, this.mesh.rotationQuaternion!);
   }
 
   /** Composes the parent planet's future position with this station's own future position in
