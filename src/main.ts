@@ -19,7 +19,8 @@ import { FreeFlyCamera } from "./camera/freeFlyCamera";
 import { computeLookRotationToRef } from "./camera/lookRotation";
 import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./camera/pathAvoidance";
 import { SolarSystem } from "./solarSystem/solarSystem";
-import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
+import { BODY_DEFS, actualSceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
+import { orbitalScale } from "./solarSystem/orbitalScale";
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI, type SelectedEntity } from "./ui/selection";
@@ -34,6 +35,7 @@ import { graphicsSettings } from "./settings/graphicsSettings";
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
 const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
+const orbitalScaleBadge = document.getElementById("orbitalScaleBadge") as HTMLElement;
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 const devStats = document.getElementById("devStats") as HTMLElement;
 
@@ -57,8 +59,10 @@ const FOCUS_MODE_ORBIT_RADIUS_FACTOR = 2.5;
  * focus mode. */
 const ENTER_FOCUS_DOUBLE_TAP_MS = 400;
 
-/** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
-const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
+/** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped -
+ * uses actualSceneDistance (not sceneDistance) since Actual scale mode's real-proportional
+ * distances are always farther than gameplay scale's compressed ones for the same body. */
+const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => actualSceneDistance(b.auDistance))) * 1.4;
 /** Stylized transit duration - not physically timed against distance, just a consistent "warp" feel. */
 const TRANSIT_DURATION_SECONDS = 3.0;
 
@@ -170,6 +174,7 @@ async function main() {
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
+  let orbitalScaleTogglePressed = false;
   let enterOrbitPressed = false;
   let lastEnterOrbitTapTime = 0;
   // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
@@ -219,6 +224,7 @@ async function main() {
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
     if (e.code === keybindings.get("freeCam") && !FREE_CAM_ONLY) freeCamTogglePressed = true;
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
+    if (e.code === keybindings.get("toggleOrbitalScale") && !e.repeat) orbitalScaleTogglePressed = true;
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
       e.preventDefault();
       // Space is the single, universal "commit" key in free cam once something's selected:
@@ -789,6 +795,13 @@ async function main() {
       groundCamera.camera.parent = target.orbit.spinNode;
     }
 
+    // beginFreeCamZoomTo's flight renders from freeFlyCamera.camera (scene.activeCamera was never
+    // reassigned here before) - without this, orbitCamera.camera gets parented/posed correctly
+    // above but the scene keeps drawing the now-frozen free-fly camera forever, which is exactly
+    // what "it locks on then you're stuck facing one way and the planet just moves and spins off
+    // screen" looked like: the real orbit camera was tracking Venus perfectly the whole time, it
+    // just was never the one being rendered from.
+    scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
     // Google Earth-style by default in focus mode - see enterOrbitFromFreeCam's own comment.
@@ -822,18 +835,25 @@ async function main() {
 
     if (groundExitCooldownRemaining > 0) groundExitCooldownRemaining -= dt;
 
+    // Advanced unconditionally, regardless of mode - SolarSystem.update reads orbitalScale.blend
+    // every frame to drive each body's current orbital distance, so this needs to keep animating
+    // even while, say, in ground mode looking at just one planet's surface.
+    if (orbitalScaleTogglePressed) orbitalScale.toggle();
+    orbitalScaleTogglePressed = false;
+    orbitalScale.update(dt);
+    orbitalScaleBadge.hidden = !orbitalScale.isActualTarget;
+
+    // Transit-specific camera movement has to run before solarSystem.update below (it computes
+    // transitSunDirOverride, which that call reads) - every OTHER camera update
+    // (orbitCamera/freeFlyCamera/groundCamera) runs AFTER solarSystem.update instead, so it reads
+    // this frame's fresh spinNode transform (orbit translation + axial spin) rather than last
+    // frame's - a body-parented camera should always be positioned/oriented off the same frame's
+    // transform it's about to be rendered with.
     if (transiting) {
       // Checked before freeCamActive: beginFreeCamZoomTo starts a transit without turning
       // freeCamActive off (still conceptually "in free cam", just autopiloting), so this must
       // win the dispatch or freeFlyCamera.update() would fight the transit's own lerp/slerp.
       updateTransit(dt);
-    } else if (freeCamActive) {
-      freeFlyCamera.update(dt);
-      resolveFreeCamCollisions();
-    } else if (mode === "ground") {
-      groundCamera.update(dt, focused.radius);
-    } else {
-      orbitCamera.update(dt); // "orbit" and "orbitEntity" both use orbitCamera
     }
 
     if (transiting) {
@@ -848,7 +868,8 @@ async function main() {
       // space, so the focused body's terrain still needs its camera position converted into
       // that body's local frame - otherwise LOD freezes at whatever level it was when this mode
       // started, making nearby terrain look permanently low-res no matter how close the camera
-      // actually gets.
+      // actually gets. Reads last frame's camera position (this frame's update runs just below) -
+      // a one-frame-stale LOD input is imperceptible, unlike a stale camera pose/rotation.
       const camPos = freeCamActive ? freeFlyCamera.camera.globalPosition : orbitCamera.camera.globalPosition;
       focused.orbit.spinNode.getWorldMatrix().invertToRef(tmpInvMatrix);
       Vector3.TransformCoordinatesToRef(camPos, tmpInvMatrix, tmpFreeCamLocalPos);
@@ -856,6 +877,17 @@ async function main() {
     } else {
       const focusedCameraLocalPosition = mode === "orbit" ? orbitCamera.camera.position : groundCamera.camera.position;
       solarSystem.update(dt, focusedCameraLocalPosition, sun);
+    }
+
+    if (!transiting) {
+      if (freeCamActive) {
+        freeFlyCamera.update(dt);
+        resolveFreeCamCollisions();
+      } else if (mode === "ground") {
+        groundCamera.update(dt, focused.radius);
+      } else {
+        orbitCamera.update(dt); // "orbit" and "orbitEntity" both use orbitCamera
+      }
     }
 
     // HemisphericLight's own direction is fixed at construction (world +Y) while the actual sun
