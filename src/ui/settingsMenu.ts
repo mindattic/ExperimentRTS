@@ -12,6 +12,7 @@ export class SettingsMenu {
   private readonly settingsCloseButton = document.getElementById("settingsCloseButton") as HTMLButtonElement;
   private readonly terrainQualitySelect = document.getElementById("terrainQualitySelect") as HTMLSelectElement;
   private readonly nightBrightnessSlider = document.getElementById("nightBrightnessSlider") as HTMLInputElement;
+  private readonly reorientationStrengthSlider = document.getElementById("reorientationStrengthSlider") as HTMLInputElement;
   private readonly showOrbitLinesCheckbox = document.getElementById("showOrbitLinesCheckbox") as HTMLInputElement;
   private readonly showShipTrajectoriesCheckbox = document.getElementById("showShipTrajectoriesCheckbox") as HTMLInputElement;
   private readonly forceMaxTerrainDetailCheckbox = document.getElementById("forceMaxTerrainDetailCheckbox") as HTMLInputElement;
@@ -59,6 +60,11 @@ export class SettingsMenu {
     this.nightBrightnessSlider.value = String(this.brightnessToSlider(graphicsSettings.nightBrightness));
     this.nightBrightnessSlider.addEventListener("input", () => {
       graphicsSettings.setNightBrightness(this.sliderToBrightness(Number(this.nightBrightnessSlider.value)));
+    });
+
+    this.reorientationStrengthSlider.value = String(Math.round(graphicsSettings.reorientationStrength * 100));
+    this.reorientationStrengthSlider.addEventListener("input", () => {
+      graphicsSettings.setReorientationStrength(Number(this.reorientationStrengthSlider.value) / 100);
     });
 
     this.populateKeybindList();

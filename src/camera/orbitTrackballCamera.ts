@@ -1,11 +1,17 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import { keybindings } from "../input/keybindings";
 import { computeLookRotationToRef } from "./lookRotation";
+import { graphicsSettings } from "../settings/graphicsSettings";
 
 const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
 const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
 const MIN_SETTLE_VELOCITY = 0.05; // rad/s - below this, inertia is considered stopped
 const RELEVEL_RATE = 3.0; // exponential blend rate for auto re-leveling roll once settled
+/** Blend rate at graphicsSettings.reorientationStrength = 1 for the CONTINUOUS ambient
+ * auto-relevel (separate from the hotkey's own one-shot reorient(), which always uses
+ * RELEVEL_RATE regardless of this setting) - high enough that a single frame's blend is
+ * visually indistinguishable from an instant snap. */
+const MAX_AMBIENT_RELEVEL_RATE = 40.0;
 const ZOOM_STEP_FRACTION = 0.12; // fraction of current radius per wheel notch
 const RADIUS_LERP_RATE = 4.0; // exponential blend rate for programmatic radius changes (e.g. exit-to-orbit)
 const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
@@ -59,6 +65,13 @@ export class OrbitTrackballCamera {
   /** Lazily computed on the blend's first update() frame, same pattern as RtsGroundCamera's own -
    * see there for why (the actual target position isn't known until then). */
   private blendDurationSeconds: number | null = null;
+  /** When set, added to the local viewDir*radius offset each frame instead of relying on
+   * camera.parent to carry a moving anchor - for orbiting something that translates but has no
+   * rotating "surface frame" worth inheriting the way a planet's spinNode has (a ship, or an
+   * asteroid tracked via AsteroidBelt.getRockWorldPosition). The caller is responsible for
+   * setting camera.parent to null itself when using this (same as it already sets camera.parent
+   * to a body's spinNode for the planet case - this class never touches parent on its own). */
+  private trackPosition: (() => Vector3) | null = null;
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -171,6 +184,13 @@ export class OrbitTrackballCamera {
     this.blendStartRot = fromRotation.clone();
     this.blendElapsed = 0;
     this.blendDurationSeconds = null;
+  }
+
+  /** Starts (or stops, if null) tracking a moving world position each frame instead of the
+   * normal "parented to a body's rotating spinNode" framing - see trackPosition's own doc
+   * comment. Caller must set camera.parent = null itself. */
+  trackWorldPosition(getPosition: (() => Vector3) | null): void {
+    this.trackPosition = getPosition;
   }
 
   /** Updates the zoom clamp range - used when focus switches to a body of a different size. */
@@ -334,6 +354,25 @@ export class OrbitTrackballCamera {
       }
     }
 
+    // Continuous ambient auto-relevel, independent of (and stacks harmlessly with) the hotkey's
+    // own one-shot reorient() above - see graphicsSettings.reorientationStrength's own comment.
+    // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
+    // already forces `up` to a fixed formula every frame just below, making this redundant).
+    if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
+      const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+      tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+      if (tmpIdealUp.lengthSquared() > 1e-6) {
+        tmpIdealUp.normalize();
+        if (graphicsSettings.reorientationStrength >= 1) {
+          this.up.copyFrom(tmpIdealUp);
+        } else {
+          const rate = graphicsSettings.reorientationStrength * MAX_AMBIENT_RELEVEL_RATE;
+          const blend = 1 - Math.exp(-rate * deltaSeconds);
+          Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
+        }
+      }
+    }
+
     if (this.planeLocked) {
       // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
       // rather than letting it free-tumble like the unlocked mode does - this is what makes
@@ -359,6 +398,7 @@ export class OrbitTrackballCamera {
     }
 
     tmpTargetPos.copyFrom(this.viewDir).scaleInPlace(this.radius);
+    if (this.trackPosition) tmpTargetPos.addInPlace(this.trackPosition());
     // The camera looks toward the planet center, i.e. the opposite of viewDir (which points
     // from center to camera). See lookRotation.ts for why this goes through
     // computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.

@@ -44,6 +44,12 @@ class GraphicsSettings {
    * depth is deliberately capped well below MAX_DEPTH - see FORCE_DETAIL_MAX_DEPTH's own comment
    * for why forcing the real max depth everywhere is computationally infeasible). */
   forceMaxTerrainDetail = false;
+  /** Ambient auto-relevel strength for OrbitTrackballCamera's roll, 0-1: 0 (default) means the
+   * camera only ever re-levels via the explicit reorient hotkey (this session's original
+   * behavior, unchanged); 1 snaps to level every frame (effectively instant); values in between
+   * blend toward level continuously at a rate scaled by this value. Independent of (and stacks
+   * harmlessly with) the hotkey's own one-shot reorient(). */
+  reorientationStrength = 0;
 
   constructor() {
     this.load();
@@ -88,6 +94,11 @@ class GraphicsSettings {
     this.save();
   }
 
+  setReorientationStrength(value: number): void {
+    this.reorientationStrength = Math.min(1, Math.max(0, value));
+    this.save();
+  }
+
   private load(): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -100,6 +111,7 @@ class GraphicsSettings {
           showOrbitLines?: boolean;
           showShipTrajectories?: boolean;
           forceMaxTerrainDetail?: boolean;
+          reorientationStrength?: number;
         };
         if (typeof data.presetIndex === "number") this.presetIndex = data.presetIndex;
         if (typeof data.nightBrightness === "number") this.nightBrightness = data.nightBrightness;
@@ -108,6 +120,7 @@ class GraphicsSettings {
         if (typeof data.showOrbitLines === "boolean") this.showOrbitLines = data.showOrbitLines;
         if (typeof data.showShipTrajectories === "boolean") this.showShipTrajectories = data.showShipTrajectories;
         if (typeof data.forceMaxTerrainDetail === "boolean") this.forceMaxTerrainDetail = data.forceMaxTerrainDetail;
+        if (typeof data.reorientationStrength === "number") this.reorientationStrength = data.reorientationStrength;
       }
     } catch {
       // localStorage unavailable or corrupted - fall back to default silently.
@@ -126,6 +139,7 @@ class GraphicsSettings {
           showOrbitLines: this.showOrbitLines,
           showShipTrajectories: this.showShipTrajectories,
           forceMaxTerrainDetail: this.forceMaxTerrainDetail,
+          reorientationStrength: this.reorientationStrength,
         }),
       );
     } catch {

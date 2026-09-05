@@ -634,7 +634,13 @@ async function main() {
 
       if (!transiting) {
         if (mode === "orbit") {
-          if (orbitCamera.requestExitToFreeCam) {
+          if (escapePressed) {
+            // Disengage "Focus mode": deselect whatever's selected and drop back to free cam -
+            // the same "back out one level" meaning ESC already has in ground mode below, just
+            // one level further out.
+            selectionUI.clearSelection();
+            toggleFreeCam();
+          } else if (orbitCamera.requestExitToFreeCam) {
             // Zoomed out past maxRadius while already there - release back to free cam, the
             // opposite end of the "swim through the system" continuum from enterGroundMode below.
             toggleFreeCam();

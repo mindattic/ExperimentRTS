@@ -185,6 +185,13 @@ export class SelectionUI {
     this.selectedSurfacePoint = null;
   }
 
+  /** Clears the selection entirely - used when backing out of orbit mode via ESC ("deselect and
+   * return to free cam"). */
+  clearSelection(): void {
+    this.targetIndex = null;
+    this.selectedSurfacePoint = null;
+  }
+
   /** Call once per frame to keep the reticle tracking the current target. */
   update(): void {
     if (this.isOrbitMode()) {
