@@ -465,3 +465,23 @@ body {
   color: #ffcf6b;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+
+.hover-label {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  transform: translate(14px, 18px); /* offset from the cursor tip so it doesn't sit under the pointer */
+  padding: 3px 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8e8e8;
+  background: rgba(20, 20, 24, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.hover-label[hidden] {
+  display: none;
+}

@@ -56,7 +56,7 @@ const DEFAULTS: Record<Action, string> = {
   groundRight: "KeyD",
   groundRotateLeft: "KeyQ",
   groundRotateRight: "KeyE",
-  reorient: "KeyP",
+  reorient: "KeyR",
   // Shares KeyE/KeyQ with groundRotateRight/groundRotateLeft - safe because those only fire in
   // ground mode (RtsGroundCamera) while moveUp/moveDown only matter in free cam - same "one
   // physical key, mode-gated behaviors" pattern as Space above.

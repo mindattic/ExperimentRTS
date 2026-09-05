@@ -54,6 +54,7 @@ export class SelectionUI {
   private readonly reticleEl: HTMLElement;
   private readonly reticleLabelEl: HTMLElement;
   private readonly orbitFocusLabelEl: HTMLElement;
+  private readonly hoverLabelEl: HTMLElement;
   private readonly getFocusLabel: () => string | null;
   private readonly isCursorModeActive: () => boolean;
   private readonly getEconomyManager: () => EconomyManager;
@@ -88,6 +89,7 @@ export class SelectionUI {
     this.reticleEl = document.getElementById("reticle")!;
     this.reticleLabelEl = document.getElementById("reticleLabel")!;
     this.orbitFocusLabelEl = document.getElementById("orbitFocusLabel")!;
+    this.hoverLabelEl = document.getElementById("hoverLabel")!;
 
     this.populateList();
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
@@ -222,6 +224,41 @@ export class SelectionUI {
       Vector3.TransformCoordinatesToRef(pick.pickedPoint, tmpInvMatrix, tmpLocalPoint);
       this.selectedSurfacePoint = { bodyIndex: index, localDir: tmpLocalPoint.normalize().clone() };
     }
+  }
+
+  /** Resolves a human-readable name for whatever a pick hit (asteroid/ship/body), or null for a
+   * miss or an unrecognized mesh - the read-only counterpart to applyPickResult's own resolution
+   * (which also mutates selection state and records a surface point), used by the hover label. */
+  private resolveNameForPick(pick: PickingInfo | null): string | null {
+    if (!pick?.hit || !pick.pickedMesh) return null;
+    if (pick.pickedMesh === this.solarSystem.belt.rockMesh && pick.thinInstanceIndex !== undefined && pick.thinInstanceIndex >= 0) {
+      return `Asteroid #${pick.thinInstanceIndex}`;
+    }
+    const ship = this.getEconomyManager().findShipForMesh(pick.pickedMesh);
+    if (ship) return ship.def.name;
+    const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
+    return index !== null ? this.solarSystem.bodies[index].def.name : null;
+  }
+
+  /** Call once per frame to show whatever's currently under the mouse cursor's name in a small
+   * tooltip that follows it. Only meaningful with a real, visible cursor - Pointer Lock
+   * mouselook freezes clientX/Y and there's no cursor to "hover" with in that state (the
+   * crosshair reticle already names its locked target via the reticle label instead), and while
+   * an automated camera flight has all input locked there's nothing meaningful to hover either. */
+  updateHoverLabel(): void {
+    if ((this.isFreeCamActive() && !this.isCursorModeActive()) || this.isInputLocked()) {
+      this.hoverLabelEl.hidden = true;
+      return;
+    }
+    const name = this.resolveNameForPick(this.scene.pick(this.scene.pointerX, this.scene.pointerY));
+    if (name === null) {
+      this.hoverLabelEl.hidden = true;
+      return;
+    }
+    this.hoverLabelEl.hidden = false;
+    this.hoverLabelEl.textContent = name;
+    this.hoverLabelEl.style.left = `${this.scene.pointerX}px`;
+    this.hoverLabelEl.style.top = `${this.scene.pointerY}px`;
   }
 
   private findBodyIndexForMesh(node: Node | null): number | null {

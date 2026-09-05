@@ -899,6 +899,7 @@ async function main() {
     // whichever camera is active) even while flying - it uses screen-space projection, not
     // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
     selectionUI.update();
+    selectionUI.updateHoverLabel();
     economyManager.update(dt, scene.activeCamera!.globalPosition);
     examineUI.update();
 
