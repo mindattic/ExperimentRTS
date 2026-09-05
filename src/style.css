@@ -552,3 +552,47 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
   white-space: nowrap;
 }
+
+.offscreen-indicator-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.offscreen-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* translate(x, y) (screen edge point) translate(-50%, -50%) (center on it) - set entirely by
+     JS each frame, same convention as .body-icon's own transform. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.offscreen-indicator[hidden] {
+  display: none;
+}
+
+.offscreen-indicator-glyph {
+  /* A solid triangle pointing straight up by default - rotated per-frame in JS to point toward
+     the target. Border-triangle trick: a zero-size box whose only visible parts are its
+     angled borders. */
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 13px solid #ffcf6b;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+}
+
+.offscreen-indicator-label {
+  font-family: system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffcf6b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}

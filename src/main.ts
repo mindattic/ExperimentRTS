@@ -26,6 +26,7 @@ import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI, type SelectedEntity } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
 import { BodyIconsUI } from "./ui/bodyIcons";
+import { OffscreenIndicatorUI } from "./ui/offscreenIndicators";
 import { EconomyManager } from "./economy/economyManager";
 import { ExamineUI } from "./ui/examineUI";
 import { SettingsMenu } from "./ui/settingsMenu";
@@ -230,6 +231,7 @@ async function main() {
   );
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const bodyIconsUI = new BodyIconsUI(solarSystem, scene, engine, () => transiting, (index) => selectionUI.setTarget(index));
+  const offscreenIndicatorUI = new OffscreenIndicatorUI(solarSystem, scene, engine);
   const economyManager = new EconomyManager(scene, solarSystem);
   const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
 
@@ -1012,6 +1014,7 @@ async function main() {
     selectionUI.update();
     selectionUI.updateHoverLabel();
     bodyIconsUI.update();
+    offscreenIndicatorUI.update();
     economyManager.update(dt, scene.activeCamera!.globalPosition);
     examineUI.update();
 
