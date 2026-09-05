@@ -284,29 +284,6 @@ body {
   display: none;
 }
 
-/* Shares the plane-lock badge's bottom:52px slot rather than needing its own - the two are
-   mutually exclusive in time (plane-lock only applies in orbit mode, this only in free cam). */
-.cursor-mode-badge {
-  position: fixed;
-  bottom: 52px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  padding: 6px 14px;
-  font-family: system-ui, sans-serif;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: #9dffb0;
-  background: rgba(20, 20, 24, 0.75);
-  border: 1px solid rgba(157, 255, 176, 0.4);
-  border-radius: 6px;
-}
-
-.cursor-mode-badge[hidden] {
-  display: none;
-}
-
 .orbit-focus-label {
   position: fixed;
   top: 16px;

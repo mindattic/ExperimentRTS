@@ -33,16 +33,28 @@ import { graphicsSettings } from "./settings/graphicsSettings";
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
 const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
-const cursorModeBadge = document.getElementById("cursorModeBadge") as HTMLElement;
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 const devStats = document.getElementById("devStats") as HTMLElement;
 
-/** Simplification per explicit request ("controls are getting out of hand ... just free cam, no
- * orbit or anything, toggle the logic off for anything else for now") - the app boots straight
- * into free cam and stays there: orbit/ground/orbitEntity modes, interplanetary transit, and the
- * F-key toggle back out of free cam are all disabled while this is true. None of that logic is
- * removed, just gated behind this one flag - flip it back to false to restore it all. */
+/** What's left disabled after "controls are getting out of hand ... just free cam" walked back
+ * to a curated subset: the raw F-key free-cam toggle and jumpToRtsAtSpot's cursor-click+Space
+ * ground-mode fast-jump. Orbit/orbitEntity "focus mode" (double-tap F - see
+ * ENTER_FOCUS_DOUBLE_TAP_MS) and ground mode's own natural zoom-in entry from there are
+ * deliberately NOT gated by this - the user asked for exactly that flow back ("move quickly
+ * across the system in an organic manner"). None of the gated logic is removed, just skipped
+ * while this is true - flip it back to false to restore it all. */
 const FREE_CAM_ONLY = true;
+
+/** Fixed "parking distance" focus mode zooms to when double-tapping F around a selected body -
+ * not the current distance (clamped), so committing to focus mode always reads the same
+ * regardless of how far away free cam happened to be. */
+const FOCUS_MODE_ORBIT_RADIUS_FACTOR = 2.5;
+
+/** How long a second F press must land within a first for enterOrbit to fire - the same
+ * "double-actuate to commit" idea as the mouse double-click-to-zoom, so a single stray tap of F
+ * (now overloaded onto the same key as the disabled freeCam toggle) can't accidentally commit to
+ * focus mode. */
+const ENTER_FOCUS_DOUBLE_TAP_MS = 400;
 
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
@@ -152,27 +164,18 @@ async function main() {
 
   let mode: "orbit" | "ground" | "orbitEntity" = "orbit";
   let freeCamActive = false;
-  let cursorModeActive = false;
   let escapePressed = false;
   let travelPressed = false;
   let reorientPressed = false;
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
   let enterOrbitPressed = false;
+  let lastEnterOrbitTapTime = 0;
   // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
   // flies the camera back up past the enterGround threshold - without it, that upward flight's
   // own still-below-threshold starting radius would immediately bounce straight back into
   // ground mode before it ever got anywhere (see exitToOrbitMode/enterGroundMode below).
   let groundExitCooldownRemaining = 0;
-
-  /** Single place that actually engages/disengages cursor mode, so the camera, badge, and
-   * reticle always stay in sync regardless of what triggered the change. */
-  function setCursorModeActive(active: boolean): void {
-    cursorModeActive = active;
-    freeFlyCamera.setCursorMode(active);
-    cursorModeBadge.hidden = !active;
-    freeCamReticle.hidden = !freeCamActive || active;
-  }
 
   const selectionUI: SelectionUI = new SelectionUI(
     solarSystem,
@@ -187,8 +190,9 @@ async function main() {
       if (mode === "orbitEntity") return selectionUI.selectedEntity?.name ?? null;
       return null;
     },
-    () => cursorModeActive,
+    () => freeFlyCamera.isCursorModeActive,
     () => economyManager,
+    () => transiting,
   );
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
@@ -220,13 +224,14 @@ async function main() {
       //   SelectionUI.applyPickResult) flies straight into RTS ground view anchored right there,
       //   skipping orbit mode entirely;
       // - otherwise, a selected body (focus list, or a plain click/reticle-pick) smoothly enters
-      //   orbit around it (lerp position + slerp rotation - see enterOrbitFromFreeCam), the same
-      //   behavior enterOrbit (Shift) triggers directly, without needing this fallback chain;
+      //   orbit around it (lerp position + slerp rotation - see enterOrbitFromFreeCam) - the same
+      //   thing double-tapping F (enterOrbit) does, without needing this fallback chain;
       // - with nothing selected yet, this is the original keyboard alternative to left-click for
       //   the free-cam reticle - clicking under Pointer Lock works too, but a dedicated key is
       //   easier to hit without disturbing mouselook.
-      // All three "commit" branches are disabled while FREE_CAM_ONLY is on - only plain
-      // selection (the final else) still works, so Space just always acts like the reticle key.
+      // All three "commit" branches stay disabled while FREE_CAM_ONLY is on (double-tapping F is
+      // the one deliberately-enabled way into focus mode - see ENTER_FOCUS_DOUBLE_TAP_MS below) -
+      // only plain selection (the final else) still works, so Space just acts like the reticle key.
       const spot = selectionUI.selectedSurfacePoint;
       const spotBody = spot ? solarSystem.bodies[spot.bodyIndex] : null;
       if (!FREE_CAM_ONLY && spot && spotBody?.landable) {
@@ -236,23 +241,28 @@ async function main() {
         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
       } else if (!FREE_CAM_ONLY && selectionUI.selectedEntity !== null) {
         // A selected ship/asteroid has no surface spot to jump to RTS at - Space just does the
-        // same smooth orbit-entry enterOrbit (Shift) would, same as the body case above.
+        // same smooth orbit-entry double-tapping F (enterOrbit) would, same as the body case above.
         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
       } else {
         selectionUI.selectWithReticle();
       }
     }
     if (
-      !FREE_CAM_ONLY &&
       e.code === keybindings.get("enterOrbit") &&
       freeCamActive &&
+      !transiting &&
       !e.repeat &&
       (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null)
     ) {
-      enterOrbitPressed = true;
-    }
-    if (e.code === keybindings.get("cursorMode") && freeCamActive && !e.repeat) {
-      setCursorModeActive(!cursorModeActive);
+      // Needs a double-tap (not a single press) to commit - see ENTER_FOCUS_DOUBLE_TAP_MS's own
+      // comment for why (this key is shared with the otherwise-inert freeCam toggle).
+      const now = performance.now();
+      if (now - lastEnterOrbitTapTime <= ENTER_FOCUS_DOUBLE_TAP_MS) {
+        enterOrbitPressed = true;
+        lastEnterOrbitTapTime = 0; // consumed - a third rapid tap shouldn't immediately fire again
+      } else {
+        lastEnterOrbitTapTime = now;
+      }
     }
   });
 
@@ -308,18 +318,14 @@ async function main() {
       scene.activeCamera = freeFlyCamera.camera;
       freeFlyCamera.attach();
       freeCamActive = true;
-      cursorModeActive = false;
       freeCamBadge.hidden = false;
-      freeCamReticle.hidden = false;
-      cursorModeBadge.hidden = true;
+      freeCamReticle.hidden = true; // cursor is free by default (see FreeFlyCamera) - reticle only matters while actively looking
       planeLockBadge.hidden = true;
     } else {
       freeFlyCamera.detach();
       freeCamActive = false;
-      cursorModeActive = false;
       freeCamBadge.hidden = true;
       freeCamReticle.hidden = true;
-      cursorModeBadge.hidden = true;
 
       orbitCamera.trackWorldPosition(null);
       orbitCamera.camera.parent = focused.orbit.spinNode;
@@ -372,13 +378,15 @@ async function main() {
   const tmpCatchDir = new Vector3();
   const tmpCatchFromRot = new Quaternion();
 
-  /** Commits to orbit around `target` from free cam - press-triggered (the "enterOrbit"
-   * keybinding, Shift by default) rather than automatic, once a target is selected. Blends in
-   * smoothly from free cam's exact last pose (see OrbitTrackballCamera.enterFromWorldPose). */
+  /** Commits to orbit ("focus mode") around `target` from free cam - triggered by double-tapping
+   * the "enterOrbit" keybinding (F by default) once a target is selected, rather than
+   * automatically. Blends in smoothly from free cam's exact last pose (see
+   * OrbitTrackballCamera.enterFromWorldPose) to a fixed FOCUS_MODE_ORBIT_RADIUS_FACTOR parking
+   * distance - always the same regardless of how far free cam happened to be, not the current
+   * (clamped) distance. */
   function enterOrbitFromFreeCam(target: (typeof solarSystem.bodies)[number]): void {
     const camPos = freeFlyCamera.camera.globalPosition.clone();
     const bodyPos = target.orbit.spinNode.getAbsolutePosition();
-    const dist = Vector3.Distance(camPos, bodyPos);
     const targetThresholds = radiusThresholds(target.radius);
 
     // Same world-direction-to-local-viewDir conversion as completeTransit() below - spinNode's
@@ -402,15 +410,14 @@ async function main() {
 
     freeFlyCamera.detach();
     freeCamActive = false;
-    cursorModeActive = false;
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
-    cursorModeBadge.hidden = true;
 
     orbitCamera.trackWorldPosition(null);
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.resetView(tmpLocalViewDir);
-    orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, dist)));
+    const parkingRadius = target.radius * FOCUS_MODE_ORBIT_RADIUS_FACTOR;
+    orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, parkingRadius)));
     orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
     orbitCamera.enterFromWorldPose(camPos, tmpCatchFromRot, otherBodyObstacles(target.def.name));
     // Seeds camera.position/rotationQuaternion at the blend's t=0 start (exactly free cam's last
@@ -431,7 +438,7 @@ async function main() {
     }
   }
 
-  /** Commits to orbit around a selected ship/asteroid from free cam - same trigger (Space/Shift)
+  /** Commits to orbit around a selected ship/asteroid from free cam - same trigger (double-tap F)
    * and entry-blend feel as enterOrbitFromFreeCam, but the target has no rotating "surface
    * frame" to parent to (a ship's own orientation changes during flip-and-burn; an asteroid has
    * no per-instance transform node at all), so this leaves the camera unparented and tracks the
@@ -444,10 +451,8 @@ async function main() {
 
     freeFlyCamera.detach();
     freeCamActive = false;
-    cursorModeActive = false;
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
-    cursorModeBadge.hidden = true;
     planeLockBadge.hidden = true; // plane-lock doesn't apply to entity-orbit
 
     orbitCamera.camera.parent = null;
@@ -480,10 +485,8 @@ async function main() {
 
     freeFlyCamera.detach();
     freeCamActive = false;
-    cursorModeActive = false;
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
-    cursorModeBadge.hidden = true;
     planeLockBadge.hidden = true;
 
     groundCamera.setHeightfield(target.heightfield);
@@ -511,13 +514,22 @@ async function main() {
   let transiting = false;
   /** True for a transit started by beginFreeCamZoomTo (double-click a planet in free cam) - the
    * moving camera is freeFlyCamera instead of orbitCamera, and it lands back in free cam
-   * (completeFreeCamZoom) rather than orbit mode (completeTransit). */
+   * (completeFreeCamZoom) rather than orbit mode (completeTransit). Irrelevant while
+   * transitArrivalMode is "away" (beginFreeCamZoomAway always moves orbitCamera.camera, then
+   * hands off to freeFlyCamera only once arrived - see its own comment). */
   let transitFreeCamMode = false;
+  /** "orbitBody": arrival keeps tracking a live body position/orientation, recomputed fresh
+   * every frame in updateTransit (beginTransit, beginFreeCamZoomTo). "away": a fixed arrival
+   * pose computed once at begin (beginFreeCamZoomAway) - backing out along a fixed radial line
+   * into open space has no body to track. */
+  let transitArrivalMode: "orbitBody" | "away" = "orbitBody";
   let transitElapsed = 0;
   let transitTargetIndex = -1;
   const transitFromPos = new Vector3();
   const transitFromRot = new Quaternion();
   const transitApproachDir = new Vector3();
+  const transitAwayArrivalPos = new Vector3();
+  const transitAwayArrivalRot = new Quaternion();
   const tmpArrivalPos = new Vector3();
   const tmpArrivalRot = new Quaternion();
   const tmpArrivalForward = new Vector3();
@@ -550,6 +562,8 @@ async function main() {
     transitTargetIndex = targetIndex;
     transitElapsed = 0;
     transiting = true;
+    transitArrivalMode = "orbitBody";
+    transitFreeCamMode = false;
 
     // Computed once up front (not lazily like the other two blend systems) since transit's
     // duration is always the same fixed TRANSIT_DURATION_SECONDS regardless of distance, so
@@ -575,23 +589,36 @@ async function main() {
     const t = Math.min(1, transitElapsed / TRANSIT_DURATION_SECONDS);
     const eased = easeInOutCubic(t);
 
-    const target = solarSystem.bodies[transitTargetIndex];
-    const targetThresholds = radiusThresholds(target.radius);
-    const targetWorldPos = target.orbit.spinNode.getAbsolutePosition();
-    tmpArrivalPos.copyFrom(targetWorldPos).addInPlace(transitApproachDir.scale(targetThresholds.defaultOrbit));
-    // Camera arrives on the near side (along transitApproachDir from the target) looking back
-    // toward it, i.e. forward is the opposite direction - see lookRotation.ts for why this
-    // goes through computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
-    tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
-    computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
+    let target: (typeof solarSystem.bodies)[number] | null = null;
+    let targetThresholds: RadiusThresholds | null = null;
 
-    const camera = transitFreeCamMode ? freeFlyCamera.camera : orbitCamera.camera;
+    if (transitArrivalMode === "away") {
+      tmpArrivalPos.copyFrom(transitAwayArrivalPos);
+      tmpArrivalRot.copyFrom(transitAwayArrivalRot);
+    } else {
+      target = solarSystem.bodies[transitTargetIndex];
+      targetThresholds = radiusThresholds(target.radius);
+      const targetWorldPos = target.orbit.spinNode.getAbsolutePosition();
+      tmpArrivalPos.copyFrom(targetWorldPos).addInPlace(transitApproachDir.scale(targetThresholds.defaultOrbit));
+      // Camera arrives on the near side (along transitApproachDir from the target) looking back
+      // toward it, i.e. forward is the opposite direction - see lookRotation.ts for why this
+      // goes through computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
+      tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
+      computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
+    }
+
+    // beginFreeCamZoomAway always moves orbitCamera.camera (whichever camera was active for
+    // "orbit"/"orbitEntity" mode) throughout the flight, only handing off to freeFlyCamera once
+    // arrived (see completeZoomAway) - so transitFreeCamMode (which only applies to the
+    // orbitBody case) is irrelevant here.
+    const camera = transitArrivalMode === "away" ? orbitCamera.camera : transitFreeCamMode ? freeFlyCamera.camera : orbitCamera.camera;
     evaluateDetourPath(transitFromPos, transitControlPoint!, tmpArrivalPos, eased, camera.position);
     Quaternion.SlerpToRef(transitFromRot, tmpArrivalRot, eased, camera.rotationQuaternion!);
 
     if (t >= 1) {
-      if (transitFreeCamMode) completeFreeCamZoom(target);
-      else completeTransit(target, targetThresholds);
+      if (transitArrivalMode === "away") completeZoomAway();
+      else if (transitFreeCamMode) completeFreeCamZoom(target!);
+      else completeTransit(target!, targetThresholds!);
     }
   }
 
@@ -618,6 +645,7 @@ async function main() {
     transitElapsed = 0;
     transiting = true;
     transitFreeCamMode = true;
+    transitArrivalMode = "orbitBody";
 
     const targetThresholds = radiusThresholds(target.radius);
     const estimatedArrivalPos = targetPos.add(transitApproachDir.scale(targetThresholds.defaultOrbit));
@@ -635,6 +663,67 @@ async function main() {
     freeFlyCamera.attach(); // resumes mouselook/WASD from exactly wherever the flight ended
     transiting = false;
     transitFreeCamMode = false;
+    stellarDust.stop();
+  }
+
+  /** ESC-triggered exit from orbit/orbitEntity ("focus mode") back to free cam: instead of an
+   * instant cut, backs the camera straight out along the same radial line it's already on (away
+   * from whatever was being orbited) into open space, then hands off to free cam - the reverse
+   * of beginFreeCamZoomTo's "swim in" ("when escape detaching from a planet and flying away lock
+   * all input"). Doesn't touch focused/thresholds - same as the old instant-cut toggleFreeCam()
+   * path, terrain LOD just keeps using whatever was last focused. */
+  function beginFreeCamZoomAway(): void {
+    if (freeCamActive || transiting) return;
+
+    // Captured before clearSelection() below wipes selectedEntity - orbitEntity mode has no
+    // "focused" body of its own (focused stays whatever planet was last focused, unrelated to
+    // the orbited ship/asteroid - see enterOrbitEntityFromFreeCam's own comment).
+    const centerPos =
+      mode === "orbitEntity" && selectionUI.selectedEntity
+        ? selectionUI.selectedEntity.getWorldPosition().clone()
+        : focused.orbit.spinNode.getAbsolutePosition().clone();
+
+    selectionUI.clearSelection();
+    orbitCamera.trackWorldPosition(null); // no-op if not currently tracking an entity - harmless
+
+    const camera = orbitCamera.camera; // only ever called from "orbit"/"orbitEntity", both use orbitCamera
+    transitFromPos.copyFrom(camera.globalPosition);
+    const worldMatrix = camera.getWorldMatrix();
+    worldMatrix.decompose(undefined, transitFromRot, undefined);
+
+    transitApproachDir.copyFrom(transitFromPos).subtractInPlace(centerPos).normalize();
+    const awayDist = mode === "orbitEntity" ? ENTITY_ORBIT_MAX_RADIUS * 1.5 : thresholds.maxOrbit * 1.5;
+    transitAwayArrivalPos.copyFrom(centerPos).addInPlace(transitApproachDir.scale(awayDist));
+    tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
+    computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), transitAwayArrivalRot);
+
+    orbitCamera.detach();
+    camera.parent = null;
+    camera.position.copyFrom(transitFromPos);
+    camera.rotationQuaternion!.copyFrom(transitFromRot);
+
+    transitElapsed = 0;
+    transiting = true;
+    transitArrivalMode = "away";
+
+    const obstacles = mode === "orbitEntity" ? otherBodyObstacles() : otherBodyObstacles(focused.def.name);
+    transitControlPoint = computeDetourControlPoint(transitFromPos, transitAwayArrivalPos, obstacles);
+
+    Vector3.TransformNormalToRef(Vector3.Forward(), Matrix.FromQuaternionToRef(transitFromRot, tmpTransitDustMatrix), tmpTransitDustDir);
+    stellarDust.start(tmpTransitDustDir);
+  }
+
+  function completeZoomAway(): void {
+    freeFlyCamera.setPose(transitAwayArrivalPos, transitAwayArrivalRot);
+    scene.activeCamera = freeFlyCamera.camera;
+    freeFlyCamera.attach();
+    freeCamActive = true;
+    freeCamBadge.hidden = false;
+    freeCamReticle.hidden = true;
+    planeLockBadge.hidden = true;
+
+    transiting = false;
+    transitArrivalMode = "orbitBody";
     stellarDust.stop();
   }
 
@@ -728,7 +817,7 @@ async function main() {
     if (freeCamTogglePressed) toggleFreeCam();
     freeCamTogglePressed = false;
 
-    if (enterOrbitPressed && freeCamActive) {
+    if (enterOrbitPressed && freeCamActive && !transiting) {
       if (selectionUI.targetIndex !== null) {
         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
       } else if (selectionUI.selectedEntity !== null) {
@@ -740,33 +829,35 @@ async function main() {
     // Consumed regardless of mode (not just !freeCamActive) - previously this was nested inside
     // the !freeCamActive block below, so pressing reorient's key in free cam left reorientPressed
     // stuck true (never reset) until free cam turned off, at which point it fired late/out of context.
-    if (reorientPressed) {
+    if (reorientPressed && !transiting) {
       if (freeCamActive) freeFlyCamera.reorient();
       else if (mode !== "ground") orbitCamera.reorient(); // "orbit" and "orbitEntity" both use orbitCamera
     }
     reorientPressed = false;
 
     if (!freeCamActive) {
-      if (lockPlaneTogglePressed && mode === "orbit") {
+      if (!transiting && lockPlaneTogglePressed && mode === "orbit") {
         orbitCamera.setPlaneLocked(!orbitCamera.isPlaneLocked);
         planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
       }
       lockPlaneTogglePressed = false;
 
-      if (travelPressed) beginTransit();
+      if (!transiting && travelPressed) beginTransit();
       travelPressed = false;
 
       if (!transiting) {
         if (mode === "orbit") {
           if (escapePressed) {
-            // Disengage "Focus mode": deselect whatever's selected and drop back to free cam -
-            // the same "back out one level" meaning ESC already has in ground mode below, just
-            // one level further out.
-            selectionUI.clearSelection();
-            toggleFreeCam();
+            // Disengage "Focus mode": back out along the same radial line into open space
+            // ("when escape detaching from a planet and flying away lock all input" - see
+            // beginFreeCamZoomAway), the same "back out one level" meaning ESC already has in
+            // ground mode below, just one level further out.
+            beginFreeCamZoomAway();
           } else if (orbitCamera.requestExitToFreeCam) {
             // Zoomed out past maxRadius while already there - release back to free cam, the
             // opposite end of the "swim through the system" continuum from enterGroundMode below.
+            // An instant cut is fine here (unlike ESC) - the camera's already drifting outward
+            // under continuous user-driven zoom, not a sudden context switch.
             toggleFreeCam();
           } else if (
             // No !orbitCamera.isFlying guard here - now that scroll zoom flows through the same
@@ -782,10 +873,11 @@ async function main() {
             enterGroundMode();
           }
         } else if (mode === "orbitEntity") {
-          if (escapePressed || orbitCamera.requestExitToFreeCam) {
-            // Same "back out to free cam" meaning as orbit mode's own ESC/zoom-out-past-max
-            // above - ships/asteroids have no ground mode to narrow into, so this is the only
-            // way out.
+          if (escapePressed) {
+            // Same "back out to free cam" meaning as orbit mode's own ESC above - ships/asteroids
+            // have no ground mode to narrow into, so this is the only way out.
+            beginFreeCamZoomAway();
+          } else if (orbitCamera.requestExitToFreeCam) {
             selectionUI.clearSelection();
             orbitCamera.trackWorldPosition(null);
             toggleFreeCam();
@@ -809,7 +901,7 @@ async function main() {
     if (graphicsSettings.developerMode) {
       const camPos = scene.activeCamera!.globalPosition;
       const distanceFromFocused = Vector3.Distance(camPos, focused.orbit.spinNode.getAbsolutePosition());
-      const cameraMode = freeCamActive ? (cursorModeActive ? "free (cursor)" : "free") : mode;
+      const cameraMode = freeCamActive ? (freeFlyCamera.isCursorModeActive ? "free (cursor)" : "free (looking)") : transiting ? "transiting" : mode;
       devStats.textContent =
         `FPS: ${engine.getFps().toFixed(0)}\n` +
         `Mode: ${cameraMode}\n` +

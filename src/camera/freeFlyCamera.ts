@@ -18,15 +18,16 @@ const tmpMatrix = new Matrix();
 /**
  * Unconstrained first-person "swim through space" camera: always in world space (never
  * parented to a body), free movement (WASD, strafing on A/D) relative to its own current
- * facing, true FPS-style mouselook via the Pointer Lock API - no button needs to be held,
- * moving the mouse looks around continuously once active. Toggled on/off independently of
- * orbit/ground mode - see main.ts's freeCam handling for how it hands off to/from whichever
- * mode was active.
+ * facing. Mouselook is GW2/MMO-style: the cursor is free by default (for clicking UI,
+ * selecting bodies) and holding the right mouse button engages true FPS-style Pointer Lock
+ * mouselook for as long as it's held, releasing back to a free cursor on mouse-up. Toggled
+ * on/off independently of orbit/ground mode - see main.ts's freeCam handling for how it hands
+ * off to/from whichever mode was active.
  */
 export class FreeFlyCamera {
   readonly camera: UniversalCamera;
 
-  private cursorModeActive = false;
+  private cursorModeActive = true;
   private reorienting = false;
   private readonly reorientTargetRot = new Quaternion();
   private readonly keys = new Set<string>();
@@ -34,6 +35,10 @@ export class FreeFlyCamera {
   private mouseMoveHandler = (e: MouseEvent) => this.onMouseMove(e);
   private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
+  private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
+  private pointerUpHandler = (e: PointerEvent) => this.onPointerUp(e);
+  private contextMenuHandler = (e: MouseEvent) => e.preventDefault();
+  private pointerLockChangeHandler = () => this.onPointerLockChange();
 
   constructor(scene: Scene, canvas: HTMLCanvasElement, farClip: number) {
     this.canvas = canvas;
@@ -53,19 +58,20 @@ export class FreeFlyCamera {
   }
 
   attach(): void {
-    this.cursorModeActive = false;
-    this.requestPointerLockWithRetry();
+    this.cursorModeActive = true; // GW2-style default: cursor is free until the right mouse button is held
     window.addEventListener("mousemove", this.mouseMoveHandler);
     window.addEventListener("keydown", this.keydownHandler);
     window.addEventListener("keyup", this.keyupHandler);
+    this.canvas.addEventListener("pointerdown", this.pointerDownHandler);
+    window.addEventListener("pointerup", this.pointerUpHandler);
+    this.canvas.addEventListener("contextmenu", this.contextMenuHandler);
+    document.addEventListener("pointerlockchange", this.pointerLockChangeHandler);
   }
 
-  /** Requesting Pointer Lock from the F-keypress handler that normally calls attach() counts as
-   * the user gesture the API requires, and just works. But attach() can also fire from purely
-   * wheel-driven input (scrolling out past orbit's max zoom auto-releases to free cam) - wheel
-   * events aren't a qualifying "transient activation" gesture for Pointer Lock in browsers, so
-   * that request silently rejects and mouselook would otherwise never engage. Falls back to
-   * retrying on the next genuine click on the canvas, which does qualify. */
+  /** Requesting Pointer Lock directly from the right-mouse-button pointerdown handler counts as
+   * the user gesture the API requires, and just works. Falls back to retrying on the next
+   * pointerdown if that specific request happens to reject (e.g. a rapid up/down flick racing a
+   * still-pending previous request). */
   private requestPointerLockWithRetry(): void {
     const result = this.canvas.requestPointerLock() as unknown;
     if (result && typeof (result as Promise<void>).catch === "function") {
@@ -84,14 +90,33 @@ export class FreeFlyCamera {
     window.removeEventListener("mousemove", this.mouseMoveHandler);
     window.removeEventListener("keydown", this.keydownHandler);
     window.removeEventListener("keyup", this.keyupHandler);
+    this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
+    window.removeEventListener("pointerup", this.pointerUpHandler);
+    this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
+    document.removeEventListener("pointerlockchange", this.pointerLockChangeHandler);
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 
-  /** MMO-style "Alt to free the cursor": pauses mouselook and releases Pointer Lock so the OS
-   * cursor reappears and can click on-screen UI, without leaving free cam or stopping WASD
-   * movement. onMouseMove already no-ops whenever document.pointerLockElement isn't this canvas
-   * (see below), so exiting/re-requesting Pointer Lock alone is enough to pause/resume look -
-   * no separate flag needs checking there. */
+  private onPointerDown(e: PointerEvent): void {
+    if (e.button === 2) this.setCursorMode(false);
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    if (e.button === 2) this.setCursorMode(true);
+  }
+
+  /** The browser force-exits Pointer Lock on its own in some cases (e.g. the user pressing
+   * Escape) regardless of anything this class does - without this, cursorModeActive could get
+   * stuck reporting "still looking" after the OS already released the lock out from under it. */
+  private onPointerLockChange(): void {
+    if (document.pointerLockElement !== this.canvas) this.cursorModeActive = true;
+  }
+
+  /** Engages (false) or releases (true) Pointer Lock mouselook - driven by holding the right
+   * mouse button (see onPointerDown/onPointerUp above), GW2/MMO-style. onMouseMove already
+   * no-ops whenever document.pointerLockElement isn't this canvas (see below), so exiting/
+   * re-requesting Pointer Lock alone is enough to pause/resume look - no separate flag needs
+   * checking there. */
   setCursorMode(active: boolean): void {
     if (active === this.cursorModeActive) return;
     this.cursorModeActive = active;

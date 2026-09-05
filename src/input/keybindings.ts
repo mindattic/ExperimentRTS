@@ -19,7 +19,6 @@ export type Action =
   | "travel"
   | "exitGround"
   | "toggleLabels"
-  | "cursorMode"
   | "enterOrbit";
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -43,8 +42,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   travel: "Plot course (travel)",
   exitGround: "Exit ground mode",
   toggleLabels: "Toggle info labels",
-  cursorMode: "Toggle cursor mode (free cam)",
-  enterOrbit: "Enter orbit around selected target (free cam)",
+  enterOrbit: "Enter focus mode around selected target (free cam)",
 };
 
 const DEFAULTS: Record<Action, string> = {
@@ -59,11 +57,11 @@ const DEFAULTS: Record<Action, string> = {
   groundRotateLeft: "KeyQ",
   groundRotateRight: "KeyE",
   reorient: "KeyP",
-  moveUp: "KeyR",
-  // Shares the KeyF default with freeCam - safe because freeCam's toggle only fires when
-  // FREE_CAM_ONLY is off (see main.ts), and moveUp/moveDown only matter while free cam is
-  // already active - same "one physical key, mode-gated behaviors" pattern as Space above.
-  moveDown: "KeyF",
+  // Shares KeyE/KeyQ with groundRotateRight/groundRotateLeft - safe because those only fire in
+  // ground mode (RtsGroundCamera) while moveUp/moveDown only matter in free cam - same "one
+  // physical key, mode-gated behaviors" pattern as Space above.
+  moveUp: "KeyE",
+  moveDown: "KeyQ",
   freeCam: "KeyF",
   lockPlane: "KeyP",
   focusMenu: "Digit1",
@@ -73,15 +71,10 @@ const DEFAULTS: Record<Action, string> = {
   travel: "Space",
   exitGround: "Escape",
   toggleLabels: "KeyL",
-  // Was AltLeft - bare Alt is browser/OS-reserved (e.g. focuses the browser's own menu bar in
-  // several browsers) and could steal focus/keyboard input from the page, so this needed a key
-  // the browser doesn't intercept.
-  cursorMode: "KeyZ",
-  // Shares the physical Shift key with FreeFlyCamera's hardcoded run-speed boost (not itself in
-  // this rebindable registry) - safe because this fires once on the keydown edge (only when a
-  // target is already selected), while the run boost is a separate, continuous "is it currently
-  // held" check; same "one physical key, two mode/state-gated behaviors" pattern as Space above.
-  enterOrbit: "ShiftLeft",
+  // Shares KeyF with freeCam - safe because freeCam's own toggle only fires when FREE_CAM_ONLY
+  // is off (see main.ts), same "one physical key, mode-gated behaviors" pattern as above. Needs
+  // a double-tap (not a single press) to fire - see main.ts's ENTER_FOCUS_DOUBLE_TAP_MS.
+  enterOrbit: "KeyF",
 };
 
 const STORAGE_KEY = "experimentrts.keybindings";

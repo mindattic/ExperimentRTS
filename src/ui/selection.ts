@@ -58,6 +58,7 @@ export class SelectionUI {
   private readonly getFocusLabel: () => string | null;
   private readonly isCursorModeActive: () => boolean;
   private readonly getEconomyManager: () => EconomyManager;
+  private readonly isInputLocked: () => boolean;
   private listOpen = false;
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -72,6 +73,7 @@ export class SelectionUI {
     getFocusLabel: () => string | null,
     isCursorModeActive: () => boolean,
     getEconomyManager: () => EconomyManager,
+    isInputLocked: () => boolean,
   ) {
     this.solarSystem = solarSystem;
     this.scene = scene;
@@ -81,6 +83,7 @@ export class SelectionUI {
     this.getFocusLabel = getFocusLabel;
     this.isCursorModeActive = isCursorModeActive;
     this.getEconomyManager = getEconomyManager;
+    this.isInputLocked = isInputLocked;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
@@ -116,6 +119,7 @@ export class SelectionUI {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    if (this.isInputLocked()) return; // an automated camera flight is in progress - see main.ts's transiting
     if (!this.listOpen) {
       if (e.code === "Digit1" && !e.repeat) this.openList();
       return;
@@ -132,11 +136,13 @@ export class SelectionUI {
   }
 
   private onPointerDown(e: PointerEvent): void {
+    if (this.isInputLocked()) return; // see onKeyDown's own comment
     this.pointerDownX = e.clientX;
     this.pointerDownY = e.clientY;
   }
 
   private onPointerUp(e: PointerEvent): void {
+    if (this.isInputLocked()) return; // see onKeyDown's own comment
     if (e.button !== 0) return; // right-click drives ground-camera free-look, not selection
 
     if (this.isFreeCamActive() && !this.isCursorModeActive()) {
