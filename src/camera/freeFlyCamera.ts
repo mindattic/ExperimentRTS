@@ -10,6 +10,7 @@ const REORIENT_RATE = 4.0;
 
 const tmpForward = new Vector3();
 const tmpRight = new Vector3();
+const tmpUp = new Vector3();
 const tmpMove = new Vector3();
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
@@ -153,12 +154,19 @@ export class FreeFlyCamera {
     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
     Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
     Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
+    Vector3.TransformNormalToRef(Vector3.Up(), tmpMatrix, tmpUp);
 
     tmpMove.setAll(0);
     if (this.keys.has(keybindings.get("groundForward"))) tmpMove.addInPlace(tmpForward);
     if (this.keys.has(keybindings.get("groundBackward"))) tmpMove.subtractInPlace(tmpForward);
     if (this.keys.has(keybindings.get("groundRight"))) tmpMove.addInPlace(tmpRight);
     if (this.keys.has(keybindings.get("groundLeft"))) tmpMove.subtractInPlace(tmpRight);
+    // Local (camera-relative) up, not world up: mouselook tilts this vector along with the
+    // camera's own orientation, so holding moveUp while aiming at a nearby body arcs around it
+    // rather than climbing away on a fixed world-vertical line ("if I look at a planet and keep
+    // pressing up I will eventually rotate around the planet").
+    if (this.keys.has(keybindings.get("moveUp"))) tmpMove.addInPlace(tmpUp);
+    if (this.keys.has(keybindings.get("moveDown"))) tmpMove.subtractInPlace(tmpUp);
 
     if (tmpMove.lengthSquared() > 0) {
       const speed = MOVE_SPEED * (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") ? RUN_MULTIPLIER : 1);

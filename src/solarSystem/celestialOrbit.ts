@@ -1,4 +1,4 @@
-import { Color3, type LinesMesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3 } from "@babylonjs/core";
+import { Color3, type LinesMesh, MeshBuilder, Quaternion, Scene, StandardMaterial, TransformNode, Vector3 } from "@babylonjs/core";
 
 const ORBIT_LINE_SEGMENTS = 128;
 /** Samples per full orbit in the precomputed position cache - see the class doc comment. At
@@ -111,8 +111,22 @@ export class CelestialOrbit {
       points.push(this.positionAt((i / ORBIT_LINE_SEGMENTS) * Math.PI * 2));
     }
     const line = MeshBuilder.CreateLines(name, { points }, scene);
-    line.color = color;
-    line.alpha = 0.2; // 80% transparent
+    // LinesMesh's own default shader material has no logarithmic-depth support and (without
+    // useVertexAlpha, never passed here) never actually enables GL alpha blending regardless of
+    // .alpha - at this scene's huge near/far ratio that meant orbit lines rendered fully opaque
+    // despite the "80% transparent" intent, and drew in front of/behind planets in the wrong
+    // order (every planet/terrain material uses useLogarithmicDepth - see
+    // celestialBody.ts/planetTerrain.ts - so a linear-depth line can't be compared against them
+    // consistently). A plain unlit StandardMaterial gets both right for free.
+    const material = new StandardMaterial(`${name}Material`, scene);
+    material.emissiveColor = color;
+    material.diffuseColor = Color3.Black();
+    material.specularColor = Color3.Black();
+    material.disableLighting = true;
+    material.alpha = 0.2; // 80% transparent
+    material.useLogarithmicDepth = true;
+    material.backFaceCulling = false;
+    line.material = material;
     line.isPickable = false;
     line.parent = parentNode;
     return line;

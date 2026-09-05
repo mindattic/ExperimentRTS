@@ -22,6 +22,11 @@ function createStationMaterial(scene: Scene, def: StationDef): StandardMaterial 
   material.diffuseColor = palette.hull;
   material.emissiveColor = palette.accent.scale(0.15);
   material.specularColor = Color3.Black();
+  // Every planet/terrain material at this scene's huge near/far ratio uses useLogarithmicDepth
+  // (see celestialBody.ts/planetTerrain.ts) - without it here too, the station's linear depth
+  // values don't compare consistently against a planet's logarithmic ones, so the torus could
+  // draw in front of a planet that should be occluding it.
+  material.useLogarithmicDepth = true;
   materialCache.set(def.faction, material);
   return material;
 }

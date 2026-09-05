@@ -159,37 +159,19 @@ async function main() {
   let freeCamTogglePressed = false;
   let lockPlaneTogglePressed = false;
   let enterOrbitPressed = false;
-  /** Alt is tap-to-toggle by default, but holding it past CURSOR_MODE_HOLD_THRESHOLD_MS instead
-   * engages cursor mode only "while holding" - true once that threshold has actually fired for
-   * the current press, so keyup knows whether to end a temporary hold or toggle a quick tap. */
-  let cursorModeHoldMode = false;
-  let cursorModeHoldTimer: ReturnType<typeof setTimeout> | null = null;
-  const CURSOR_MODE_HOLD_THRESHOLD_MS = 500;
   // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
   // flies the camera back up past the enterGround threshold - without it, that upward flight's
   // own still-below-threshold starting radius would immediately bounce straight back into
   // ground mode before it ever got anywhere (see exitToOrbitMode/enterGroundMode below).
   let groundExitCooldownRemaining = 0;
 
-  /** Single place that actually engages/disengages cursor mode - both the tap-toggle and the
-   * hold-mode paths (keydown/keyup handlers below) funnel through this so the camera, badge,
-   * and reticle always stay in sync regardless of which path drove the change. */
+  /** Single place that actually engages/disengages cursor mode, so the camera, badge, and
+   * reticle always stay in sync regardless of what triggered the change. */
   function setCursorModeActive(active: boolean): void {
     cursorModeActive = active;
     freeFlyCamera.setCursorMode(active);
     cursorModeBadge.hidden = !active;
     freeCamReticle.hidden = !freeCamActive || active;
-  }
-
-  /** Cleans up any in-flight hold-timer/hold-state - called whenever free cam exits altogether
-   * (toggled off, or caught into orbit), so a stale timer from a press that was interrupted
-   * mid-hold can't fire later and reactivate cursor mode on whatever camera is active by then. */
-  function cancelCursorModeHold(): void {
-    if (cursorModeHoldTimer !== null) {
-      clearTimeout(cursorModeHoldTimer);
-      cursorModeHoldTimer = null;
-    }
-    cursorModeHoldMode = false;
   }
 
   const selectionUI: SelectionUI = new SelectionUI(
@@ -234,7 +216,7 @@ async function main() {
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
       e.preventDefault();
       // Space is the single, universal "commit" key in free cam once something's selected:
-      // - a specific surface spot pending (hold the cursorMode key, click a landable body - see
+      // - a specific surface spot pending (toggle cursor mode on, click a landable body - see
       //   SelectionUI.applyPickResult) flies straight into RTS ground view anchored right there,
       //   skipping orbit mode entirely;
       // - otherwise, a selected body (focus list, or a plain click/reticle-pick) smoothly enters
@@ -270,32 +252,6 @@ async function main() {
       enterOrbitPressed = true;
     }
     if (e.code === keybindings.get("cursorMode") && freeCamActive && !e.repeat) {
-      cursorModeHoldMode = false;
-      cursorModeHoldTimer = setTimeout(() => {
-        cursorModeHoldTimer = null;
-        if (!freeCamActive) return;
-        cursorModeHoldMode = true;
-        setCursorModeActive(true);
-      }, CURSOR_MODE_HOLD_THRESHOLD_MS);
-    }
-  });
-
-  // Tap Alt (release before the hold threshold) to toggle cursor mode persistently; hold it past
-  // the threshold to use it only "while holding" - the keydown timer above engages cursor mode
-  // the instant the hold threshold is crossed, and this keyup handler decides, based on whether
-  // that happened, whether release should end a temporary hold or toggle a completed tap.
-  window.addEventListener("keyup", (e) => {
-    if (settingsMenu.isListeningForKey) return;
-    if (e.code !== keybindings.get("cursorMode")) return;
-    if (cursorModeHoldTimer !== null) {
-      clearTimeout(cursorModeHoldTimer);
-      cursorModeHoldTimer = null;
-    }
-    if (!freeCamActive) return;
-    if (cursorModeHoldMode) {
-      cursorModeHoldMode = false;
-      setCursorModeActive(false);
-    } else {
       setCursorModeActive(!cursorModeActive);
     }
   });
@@ -340,7 +296,6 @@ async function main() {
       freeFlyCamera.attach();
       freeCamActive = true;
       cursorModeActive = false;
-      cancelCursorModeHold();
       freeCamBadge.hidden = false;
       freeCamReticle.hidden = false;
       cursorModeBadge.hidden = true;
@@ -349,7 +304,6 @@ async function main() {
       freeFlyCamera.detach();
       freeCamActive = false;
       cursorModeActive = false;
-      cancelCursorModeHold();
       freeCamBadge.hidden = true;
       freeCamReticle.hidden = true;
       cursorModeBadge.hidden = true;
@@ -436,7 +390,6 @@ async function main() {
     freeFlyCamera.detach();
     freeCamActive = false;
     cursorModeActive = false;
-    cancelCursorModeHold();
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
     cursorModeBadge.hidden = true;
@@ -479,7 +432,6 @@ async function main() {
     freeFlyCamera.detach();
     freeCamActive = false;
     cursorModeActive = false;
-    cancelCursorModeHold();
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
     cursorModeBadge.hidden = true;
@@ -498,7 +450,7 @@ async function main() {
     mode = "orbitEntity";
   }
 
-  /** The other, faster way to commit from free cam: hold the cursorMode key to click a specific
+  /** The other, faster way to commit from free cam: toggle cursor mode on to click a specific
    * surface spot, then press Space to fly straight into RTS ground view anchored right there,
    * skipping orbit mode entirely. RtsGroundCamera's own entry blend is distance-scaled (see its
    * ENTRY_BLEND_MIN/MAX_SECONDS), so this reads as a continuous flight even from far away. */
@@ -516,7 +468,6 @@ async function main() {
     freeFlyCamera.detach();
     freeCamActive = false;
     cursorModeActive = false;
-    cancelCursorModeHold();
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
     cursorModeBadge.hidden = true;
@@ -721,8 +672,8 @@ async function main() {
     enterOrbitPressed = false;
 
     // Consumed regardless of mode (not just !freeCamActive) - previously this was nested inside
-    // the !freeCamActive block below, so pressing R in free cam left reorientPressed stuck true
-    // (never reset) until free cam turned off, at which point it fired late/out of context.
+    // the !freeCamActive block below, so pressing reorient's key in free cam left reorientPressed
+    // stuck true (never reset) until free cam turned off, at which point it fired late/out of context.
     if (reorientPressed) {
       if (freeCamActive) freeFlyCamera.reorient();
       else if (mode !== "ground") orbitCamera.reorient(); // "orbit" and "orbitEntity" both use orbitCamera

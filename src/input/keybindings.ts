@@ -10,6 +10,8 @@ export type Action =
   | "groundRotateLeft"
   | "groundRotateRight"
   | "reorient"
+  | "moveUp"
+  | "moveDown"
   | "freeCam"
   | "lockPlane"
   | "focusMenu"
@@ -32,6 +34,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   groundRotateLeft: "Ground: rotate left",
   groundRotateRight: "Ground: rotate right",
   reorient: "Reorient camera",
+  moveUp: "Free cam: move up",
+  moveDown: "Free cam: move down",
   freeCam: "Toggle free cam",
   lockPlane: "Lock orbit to solar plane",
   focusMenu: "Open focus list",
@@ -54,7 +58,12 @@ const DEFAULTS: Record<Action, string> = {
   groundRight: "KeyD",
   groundRotateLeft: "KeyQ",
   groundRotateRight: "KeyE",
-  reorient: "KeyR",
+  reorient: "KeyP",
+  moveUp: "KeyR",
+  // Shares the KeyF default with freeCam - safe because freeCam's toggle only fires when
+  // FREE_CAM_ONLY is off (see main.ts), and moveUp/moveDown only matter while free cam is
+  // already active - same "one physical key, mode-gated behaviors" pattern as Space above.
+  moveDown: "KeyF",
   freeCam: "KeyF",
   lockPlane: "KeyP",
   focusMenu: "Digit1",

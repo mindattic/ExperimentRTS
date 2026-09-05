@@ -32,25 +32,27 @@ export function sceneDistance(au: number): number {
   return EARTH_DISTANCE * Math.pow(au, 0.72);
 }
 
-/** Single knob for "slow everything down further" requests - multiplies every period (both
- * orbit and axial spin) by 1/SPEED_MULTIPLIER, so 0.1 means "10x slower" ("slow by 90%"). */
-const SPEED_MULTIPLIER = 0.1;
+/** Single knob for "speed everything up/down" requests - divides every period (both orbit and
+ * axial spin) by SPEED_MULTIPLIER, so 0.1 means "10x slower" and 3 means "3x faster". Currently
+ * 3, tuned so a full Earth year takes 10 minutes ("make the simulation run fast, so you can
+ * visibly see planets moving") - see EARTH_ORBIT_SECONDS below. */
+const SPEED_MULTIPLIER = 3;
 
 /** Compresses a real orbital period (Earth years) into scene seconds. Outer bodies still orbit slower than inner ones, just not by 100x+. */
 export function orbitPeriodSeconds(earthYears: number): number {
-  const EARTH_ORBIT_SECONDS = 1800; // 30 minutes for a full Earth year, per "slow down further, minutes not seconds"
+  const EARTH_ORBIT_SECONDS = 1800; // pre-SPEED_MULTIPLIER baseline; 1800/3 = 600s = 10 minutes for a full Earth year
   return (EARTH_ORBIT_SECONDS * Math.pow(earthYears, 0.55)) / SPEED_MULTIPLIER;
 }
 
-/** Applies the same global slowdown to a body's raw axial spin period. */
+/** Applies the same global speed knob to a body's raw axial spin period. */
 export function spinPeriodSeconds(def: BodyDef): number {
   return def.spinPeriodSeconds / SPEED_MULTIPLIER;
 }
 
-/** Applies the same global slowdown to a moon's raw orbit period (moonOrbitPeriodSeconds is
+/** Applies the same global speed knob to a moon's raw orbit period (moonOrbitPeriodSeconds is
  * already in scene seconds directly, unlike orbitPeriodSeconds() which compresses real Earth
- * years - this just keeps it consistent with every other period in the system slowing
- * together under the one shared knob). */
+ * years - this just keeps it consistent with every other period in the system moving together
+ * under the one shared knob). */
 export function moonOrbitPeriodSeconds(def: BodyDef): number {
   return (def.moonOrbitPeriodSeconds ?? 900) / SPEED_MULTIPLIER;
 }
