@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { computeLookRotationToRef } from "../camera/lookRotation";
+import { orbitalScale } from "../solarSystem/orbitalScale";
 import type { Dockable } from "./dockable";
 
 export interface RendezvousResult {
@@ -8,6 +9,33 @@ export interface RendezvousResult {
 }
 
 const tmpPredicted = new Vector3();
+const tmpToCurrent = new Vector3();
+const tmpFromGameplay = new Vector3();
+const tmpToGameplay = new Vector3();
+
+/**
+ * Scales `cruiseSpeed` so travelSeconds (2*distance/cruiseSpeed, see solveRendezvous) comes out
+ * the same regardless of the live actual/gameplay orbital-scale blend - "the time it takes to
+ * get from Mars to Jupiter is the same in both Actual and gameplay mode". Computed once at
+ * departure (not re-solved live mid-flight - an accepted v1 boundary, see the class doc comment
+ * on solveRendezvous for the same kind of simplifying assumption) from each dock's
+ * gameplay-equivalent position: since a Base/Station's own local offset from its parent planet
+ * is independent of the toggle (Bases sit at a fixed surface point; Stations are explicitly out
+ * of scope - see orbitalScale.ts), only the parent planet's own position needs rescaling, which
+ * orbitalScale.gameplayPositionOf already knows how to do.
+ */
+export function effectiveCruiseSpeed(cruiseSpeed: number, from: Dockable, to: Dockable, fromCurrentPosition: Vector3): number {
+  to.predictWorldPositionAt(0, tmpToCurrent);
+  const currentDistance = Vector3.Distance(fromCurrentPosition, tmpToCurrent);
+
+  orbitalScale.gameplayPositionOf(from.parentBody, tmpFromGameplay);
+  tmpFromGameplay.addInPlace(fromCurrentPosition).subtractInPlace(from.parentBody.orbit.orbitNode.position);
+  orbitalScale.gameplayPositionOf(to.parentBody, tmpToGameplay);
+  tmpToGameplay.addInPlace(tmpToCurrent).subtractInPlace(to.parentBody.orbit.orbitNode.position);
+  const gameplayDistance = Vector3.Distance(tmpFromGameplay, tmpToGameplay);
+
+  return gameplayDistance > 1e-6 ? cruiseSpeed * (currentDistance / gameplayDistance) : cruiseSpeed;
+}
 
 /**
  * Solves for how long a ship flying with peak speed `cruiseSpeed` (the flip-and-burn flight

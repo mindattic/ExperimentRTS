@@ -4,7 +4,8 @@ import { Star } from "../environment/star";
 import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
-import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
+import { BODY_DEFS, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
+import { orbitalScale } from "./orbitalScale";
 import { mulberry32 } from "../terrain/prng";
 import type { HeightmapImageData } from "../terrain/heightmapImage";
 
@@ -30,6 +31,11 @@ export class SolarSystem {
   readonly belt: AsteroidBelt;
   focusedIndex: number;
   private readonly orbitLineMeshes: LinesMesh[] = [];
+  /** Parallel to orbitLineMeshes - the CelestialOrbit each line was drawn from, and the
+   * gameplay-scale semi-major axis it was drawn AT (a fixed one-time mesh, never rebuilt) - so
+   * SolarSystem.update can keep it visually attached to its body by applying a uniform
+   * mesh.scaling = currentSMA/gameplaySMA every frame instead of regenerating geometry. */
+  private readonly orbitLines: { mesh: LinesMesh; gameplaySemiMajorAxis: number; getCurrentSemiMajorAxis: () => number }[] = [];
 
   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
    * as close to "fixed at infinity" as the clipping range allows. */
@@ -52,12 +58,13 @@ export class SolarSystem {
     const moonDefs = BODY_DEFS.filter((def) => def.orbitsAround);
 
     this.bodies = starOrbitingDefs.map((def, index) => {
+      const gameplaySemiMajorAxis = sceneDistance(def.auDistance);
       const body = new CelestialBody(
         scene,
         def,
         {
           name: def.name,
-          semiMajorAxis: sceneDistance(def.auDistance),
+          semiMajorAxis: gameplaySemiMajorAxis,
           eccentricity: def.eccentricity,
           orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
           orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
@@ -66,20 +73,27 @@ export class SolarSystem {
           startAngle: (index / starOrbitingDefs.length) * Math.PI * 2 + rand() * 0.5,
         },
         heightmapImages[def.name],
+        actualSceneDistance(def.auDistance),
       );
-      this.orbitLineMeshes.push(body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed)));
+      const line = body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
+      this.orbitLineMeshes.push(line);
+      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => body.orbit.semiMajorAxis });
       return body;
     });
 
     for (const def of moonDefs) {
       const parent = this.bodies.find((b) => b.def.name === def.orbitsAround);
       if (!parent) continue; // BODY_DEFS is static and self-consistent - shouldn't happen
+      const gameplaySemiMajorAxis = parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6);
+      const actualSemiMajorAxis = def.moonOrbitRadiusInParentRadiiActual
+        ? parent.radius * def.moonOrbitRadiusInParentRadiiActual
+        : gameplaySemiMajorAxis;
       const moon = new CelestialBody(
         scene,
         def,
         {
           name: def.name,
-          semiMajorAxis: parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6),
+          semiMajorAxis: gameplaySemiMajorAxis,
           eccentricity: def.eccentricity,
           orbitPeriodSeconds: moonOrbitPeriodSeconds(def),
           orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.2),
@@ -88,9 +102,12 @@ export class SolarSystem {
           startAngle: rand() * Math.PI * 2,
         },
         heightmapImages[def.name],
+        actualSemiMajorAxis,
       );
       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
-      this.orbitLineMeshes.push(moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode));
+      const line = moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);
+      this.orbitLineMeshes.push(line);
+      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => moon.orbit.semiMajorAxis });
       this.bodies.push(moon);
     }
 
@@ -133,8 +150,19 @@ export class SolarSystem {
    * clicked?").
    */
   update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight, sunDirectionOverride?: Vector3): void {
+    const blend = orbitalScale.blend;
     for (const body of this.bodies) {
+      // A no-op for bodies actualSemiMajorAxis === gameplaySemiMajorAxis (not in the toggle's
+      // scope, or Earth itself - the fixed anchor both modes agree on) - cheap enough (~12
+      // bodies) not to bother skipping those explicitly.
+      body.orbit.setSemiMajorAxis(body.gameplaySemiMajorAxis + (body.actualSemiMajorAxis - body.gameplaySemiMajorAxis) * blend);
       body.orbit.update(deltaSeconds);
+    }
+    // Orbit-line meshes are drawn once at gameplay scale and never rebuilt (see
+    // CelestialOrbit.createOrbitLine) - a uniform mesh scale keeps each one visually attached to
+    // its body's current (possibly blended) distance instead of the geometry going stale.
+    for (const line of this.orbitLines) {
+      line.mesh.scaling.setAll(line.getCurrentSemiMajorAxis() / line.gameplaySemiMajorAxis);
     }
     this.belt.update(deltaSeconds);
 

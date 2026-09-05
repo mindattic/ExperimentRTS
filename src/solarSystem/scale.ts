@@ -36,6 +36,18 @@ export function sceneDistance(au: number): number {
  * a real-world distance threshold is needed (e.g. terrain.ts's LOD distance breakpoints). */
 export const AU_IN_SCENE_UNITS = sceneDistance(1);
 
+/** The "Actual scale" counterpart to sceneDistance() - true real-world-proportional distance
+ * (linear in AU, no compression curve), anchored so Earth's own distance is IDENTICAL in both
+ * modes ("on actual scale mode it's exactly the same scale; on gameplay scale it's exaggerated")
+ * - only bodies farther/closer than Earth redistribute relative to that fixed anchor. See
+ * orbitalScale.ts for the toggle that blends every body's orbit between this and
+ * sceneDistance(). Always >= sceneDistance() for the same au (the compression curve only ever
+ * shrinks, never grows, outer distances) - callers that need "whichever is farther" (e.g.
+ * FAR_CLIP) can rely on this ordering instead of computing both and comparing. */
+export function actualSceneDistance(au: number): number {
+  return EARTH_DISTANCE * au;
+}
+
 /** Single knob for "speed everything up/down" requests - divides every period (both orbit and
  * axial spin) by SPEED_MULTIPLIER, so 0.1 means "10x slower" and 3 means "3x faster". Currently
  * 3, tuned so a full Earth year takes 10 minutes ("make the simulation run fast, so you can
@@ -102,6 +114,12 @@ export interface BodyDef {
   /** Orbit distance from the parent body's center, in units of the PARENT's own scene-unit
    * radius (not AU) - only used when `orbitsAround` is set. */
   moonOrbitRadiusInParentRadii?: number;
+  /** The real orbit distance from the parent's center, same units as moonOrbitRadiusInParentRadii
+   * (parent radii) - what this moon's orbit blends toward in "actual" scale mode (see
+   * orbitalScale.ts). Omit for a moon not yet given an accurate real-distance figure - it simply
+   * stays at its gameplay distance regardless of scale mode (see
+   * CelestialBody.actualSemiMajorAxis's own comment on this same fallback pattern). */
+  moonOrbitRadiusInParentRadiiActual?: number;
   /** Orbit period, scene seconds directly (not run through orbitPeriodSeconds()'s AU-based
    * compression curve, which is tuned for star-relative distances) - only used when
    * `orbitsAround` is set. */
@@ -128,7 +146,10 @@ export const BODY_DEFS: readonly BodyDef[] = [
   // available clearance, not the full margin) - see maxSafePersonalSpaceRadius and the
   // self-check loop below, which now catches this class of mistake at load time instead of
   // needing it to be visually spotted.
-  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 1.5, moonOrbitPeriodSeconds: 900 },
+  // moonOrbitRadiusInParentRadiiActual: 60.3 is the Moon's real mean distance (~384,400 km)
+  // divided by Earth's real radius (~6,371 km) - what "Actual scale" mode blends toward (see
+  // orbitalScale.ts) alongside the compressed 1.5x gameplay value above.
+  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 1.5, moonOrbitRadiusInParentRadiiActual: 60.3, moonOrbitPeriodSeconds: 900 },
   { name: "Mars", kind: "rocky", auDistance: 1.52, orbitYears: 1.88, eccentricity: 0.02, relativeRadius: 0.55, realDiameterRatio: 0.53, spinPeriodSeconds: 210, seed: 103, atmosphereLevel: 0.05 },
   { name: "Jupiter", kind: "gasGiant", auDistance: 5.2, orbitYears: 11.9, eccentricity: 0.02, relativeRadius: 4.0, realDiameterRatio: 11.2, spinPeriodSeconds: 90, seed: 104, atmosphereLevel: 0 },
   { name: "Saturn", kind: "gasGiant", auDistance: 9.5, orbitYears: 29.4, eccentricity: 0.02, relativeRadius: 3.5, realDiameterRatio: 9.45, spinPeriodSeconds: 95, seed: 105, atmosphereLevel: 0 },

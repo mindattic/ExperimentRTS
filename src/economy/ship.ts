@@ -3,7 +3,15 @@ import type { Dockable } from "./dockable";
 import type { ShipDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
 import { createHullMaterial, createShipIconMaterial, hashSeed, HULL_FACE_UV } from "./hullTexture";
-import { buildFlightProfile, computeFlightRotations, evaluateFlightProfile, evaluateFlightRotation, solveRendezvous, type FlightProfile } from "./shipTransit";
+import {
+  buildFlightProfile,
+  computeFlightRotations,
+  effectiveCruiseSpeed,
+  evaluateFlightProfile,
+  evaluateFlightRotation,
+  solveRendezvous,
+  type FlightProfile,
+} from "./shipTransit";
 import { EARTH_RADIUS } from "../solarSystem/scale";
 import type { ExaminableInfo } from "../ui/examineUI";
 import { graphicsSettings } from "../settings/graphicsSettings";
@@ -133,9 +141,14 @@ export class Ship {
   }
 
   private departNext(resolveStop: StopResolver): void {
+    // Captured before advanceRouteIndex overwrites routeIndex - this is where the ship is
+    // departing FROM, needed (alongside destination) to keep travel time invariant across the
+    // actual/gameplay orbital-scale toggle - see effectiveCruiseSpeed's own comment.
+    const origin = resolveStop(this.def.route[this.routeIndex]);
     this.advanceRouteIndex();
     const destination = resolveStop(this.def.route[this.routeIndex]);
-    const result = solveRendezvous(this.root.position, destination, this.def.cruiseSpeed);
+    const cruiseSpeed = effectiveCruiseSpeed(this.def.cruiseSpeed, origin, destination, this.root.position);
+    const result = solveRendezvous(this.root.position, destination, cruiseSpeed);
     this.profile = buildFlightProfile(this.root.position.clone(), result.arrivalPosition, result.travelSeconds);
     computeFlightRotations(this.profile, this.qPrograde, this.qRetrograde);
     this.elapsed = 0;

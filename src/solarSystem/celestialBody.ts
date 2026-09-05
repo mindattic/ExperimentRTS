@@ -92,18 +92,31 @@ export class CelestialBody {
   readonly terrain: PlanetTerrain | null;
   readonly mesh: Mesh | null;
   readonly radius: number;
+  /** The semi-major axis this body was constructed with (always the compressed "gameplay"
+   * distance - construction always happens before any actual/gameplay blend ever moves). */
+  readonly gameplaySemiMajorAxis: number;
+  /** The real-world-proportional semi-major axis this body's orbit blends toward in "actual"
+   * scale mode (see orbitalScale.ts) - defaults to gameplaySemiMajorAxis (a no-op scale) for
+   * bodies the toggle doesn't apply to, so SolarSystem.update can blend every body uniformly
+   * without needing to special-case which ones are in scope. */
+  readonly actualSemiMajorAxis: number;
 
   /**
    * @param heightmapImage A real elevation map preloaded for this body (see heightmapImage.ts
    * and main.ts's preload step) - only meaningful for landable bodies; switches
    * PlanetHeightfield to sample it instead of procedural noise. Omit to keep procedural
    * terrain (Pluto/Eris, or if a real map failed to load).
+   * @param actualSemiMajorAxis The real-world-proportional distance this body's orbit blends
+   * toward in "actual" scale mode - omit for bodies not in the toggle's scope (e.g. dwarf
+   * planets/moons with no accurate real-distance figure entered yet).
    */
-  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, heightmapImage?: HeightmapImageData) {
+  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, heightmapImage?: HeightmapImageData, actualSemiMajorAxis?: number) {
     this.def = def;
     this.orbit = new CelestialOrbit(scene, orbitOptions);
     this.radius = bodyRadius(def);
     this.landable = def.kind !== "gasGiant";
+    this.gameplaySemiMajorAxis = orbitOptions.semiMajorAxis;
+    this.actualSemiMajorAxis = actualSemiMajorAxis ?? orbitOptions.semiMajorAxis;
 
     if (this.landable) {
       this.terrain = new PlanetTerrain(scene, this.radius, def.seed, this.orbit.spinNode);

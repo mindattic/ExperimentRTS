@@ -21,7 +21,8 @@ export type Action =
   | "travel"
   | "exitGround"
   | "toggleLabels"
-  | "enterOrbit";
+  | "enterOrbit"
+  | "toggleOrbitalScale";
 
 export const ACTION_LABELS: Record<Action, string> = {
   orbitYawLeft: "Orbit: yaw left",
@@ -47,6 +48,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   exitGround: "Exit ground mode",
   toggleLabels: "Toggle info labels",
   enterOrbit: "Enter focus mode around selected target (free cam)",
+  toggleOrbitalScale: "Toggle Actual/Gameplay orbital scale",
 };
 
 const DEFAULTS: Record<Action, string> = {
@@ -82,6 +84,7 @@ const DEFAULTS: Record<Action, string> = {
   // is off (see main.ts), same "one physical key, mode-gated behaviors" pattern as above. Needs
   // a double-tap (not a single press) to fire - see main.ts's ENTER_FOCUS_DOUBLE_TAP_MS.
   enterOrbit: "KeyF",
+  toggleOrbitalScale: "Backquote",
 };
 
 const STORAGE_KEY = "experimentrts.keybindings";
