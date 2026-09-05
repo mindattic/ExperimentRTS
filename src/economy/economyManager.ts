@@ -50,6 +50,16 @@ export class EconomyManager {
     for (const ship of this.ships) ship.setTrajectoryVisible(visible);
   }
 
+  /** Every Base/Station whose parentBody is `bodyName` - used by SelectionUI's breadcrumb
+   * navigation (see BreadcrumbNode in selection.ts) to show a body's docked Bases/Stations as
+   * its children, the same way a planet's own moons are. */
+  getDockablesForBody(bodyName: string): (Base | Station)[] {
+    const result: (Base | Station)[] = [];
+    for (const base of this.bases) if (base.parentBody.def.name === bodyName) result.push(base);
+    for (const station of this.stations) if (station.parentBody.def.name === bodyName) result.push(station);
+    return result;
+  }
+
   /** Walks up from a picked mesh's parent chain looking for a ship's root - same pattern as
    * SelectionUI's own findBodyIndexForMesh, generalized for a different entity kind. */
   findShipForMesh(mesh: Node | null): Ship | null {

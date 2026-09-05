@@ -3,6 +3,8 @@ import type { SolarSystem } from "../solarSystem/solarSystem";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import type { FreeFlyCamera } from "../camera/freeFlyCamera";
 import type { EconomyManager } from "../economy/economyManager";
+import type { Base } from "../economy/base";
+import type { Station } from "../economy/station";
 
 const AU_IN_KM = 149_597_870.7;
 /** Real (not compressed) Earth radius, km - used to convert a moon's
@@ -42,14 +44,31 @@ const tmpInvMatrix = new Matrix();
 const tmpLocalPoint = new Vector3();
 const tmpEntityPos = new Vector3();
 
-/** A selected ship or asteroid - deliberately decoupled from Ship/AsteroidBelt's own shapes
- * (just "a name" and "a way to get its current world position each frame"), same spirit as the
- * economy layer's own Dockable interface, so this class doesn't need to know their internals. */
+/** A selected ship, asteroid, base, or station - deliberately decoupled from those classes' own
+ * shapes (just "a name" and "a way to get its current world position each frame"), same spirit
+ * as the economy layer's own Dockable interface, so this class doesn't need to know their
+ * internals. */
 export type SelectedEntity = {
-  kind: "ship" | "asteroid";
+  kind: "ship" | "asteroid" | "base" | "station";
   name: string;
   getWorldPosition: () => Vector3;
 };
+
+/**
+ * One level of the breadcrumb focus browser (see BreadcrumbNode's own class doc comment on
+ * SelectionUI): "Sol" at the root, its planets/dwarf planets as children, each of those bodies'
+ * moons and docked Bases/Stations as ITS children, and so on - generic over what's actually at
+ * each level so adding a deeper tier later (e.g. a future city on a moon) is just a new
+ * BreadcrumbNode source, not a rewrite of the browser itself.
+ */
+interface BreadcrumbNode {
+  readonly label: string;
+  /** Selects this node as the current target/entity (see SelectionUI.setTarget/setSelectedEntity)
+   * - null for a node with nothing meaningful to select (the root "Sol" entry, which exists only
+   * to be drilled into). */
+  readonly select: (() => void) | null;
+  readonly children: () => BreadcrumbNode[];
+}
 
 function digitFromCode(code: string): number | null {
   const match = /^Digit(\d)$/.exec(code);
@@ -80,6 +99,7 @@ export class SelectionUI {
   private readonly freeFlyCamera: FreeFlyCamera;
   private readonly isFreeCamActive: () => boolean;
   private readonly focusListEl: HTMLElement;
+  private readonly focusListTitleEl: HTMLElement;
   private readonly focusListItemsEl: HTMLOListElement;
   private readonly reticleEl: HTMLElement;
   private readonly reticleLabelEl: HTMLElement;
@@ -94,6 +114,13 @@ export class SelectionUI {
   private readonly isInputLocked: () => boolean;
   private readonly canvas: HTMLCanvasElement;
   private listOpen = false;
+  /** The breadcrumb trail currently drilled into - always starts at [rootNode] on open (see
+   * openList) - the LAST entry's own .children() is what's currently rendered as the numbered
+   * list; the full trail (entry.label joined by " > ") is the header text above it. */
+  private breadcrumbPath: BreadcrumbNode[] = [];
+  /** The current breadcrumb level's own children (set by renderBreadcrumbLevel) - what a digit
+   * press in onKeyDown actually indexes into. */
+  private currentChildren: BreadcrumbNode[] = [];
   private pointerDownX = 0;
   private pointerDownY = 0;
   /** Tracked ourselves via a real pointermove listener, rather than trusting Babylon's own
@@ -127,13 +154,13 @@ export class SelectionUI {
     this.isInputLocked = isInputLocked;
     this.canvas = canvas;
     this.focusListEl = document.getElementById("focusList")!;
+    this.focusListTitleEl = document.getElementById("focusListTitle")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
     this.reticleLabelEl = document.getElementById("reticleLabel")!;
     this.orbitFocusLabelEl = document.getElementById("orbitFocusLabel")!;
     this.hoverLabelEl = document.getElementById("hoverLabel")!;
 
-    this.populateList();
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
     canvas.addEventListener("pointerdown", (e) => this.onPointerDown(e));
     canvas.addEventListener("pointerup", (e) => this.onPointerUp(e));
@@ -156,21 +183,75 @@ export class SelectionUI {
     return { x: clientX - rect.left, y: clientY - rect.top };
   }
 
-  private populateList(): void {
+  /** A dockable's kind, for SelectedEntity.kind - structural check rather than importing Base/
+   * Station as values just for an instanceof, since Dockable already carries everything else
+   * this needs (id, parentBody, predictWorldPositionAt). Stations are the only Dockable with an
+   * `orbitRadiusInParentRadii`-shaped def field (see StationDef); Base's def has no equivalent. */
+  private dockableKind(dockable: Base | Station): "base" | "station" {
+    return "orbitRadiusInParentRadii" in dockable.def ? "station" : "base";
+  }
+
+  private buildDockableNode(dockable: Base | Station): BreadcrumbNode {
+    const kind = this.dockableKind(dockable);
+    return {
+      label: dockable.def.name,
+      select: () =>
+        this.setSelectedEntity({ kind, name: dockable.def.name, getWorldPosition: () => dockable.mesh.getAbsolutePosition() }),
+      children: () => [],
+    };
+  }
+
+  private buildBodyNode(body: CelestialBody): BreadcrumbNode {
+    return {
+      label: body.def.name,
+      select: () => this.setTarget(this.solarSystem.bodies.indexOf(body)),
+      children: () => {
+        const moons = this.solarSystem.bodies.filter((b) => b.def.orbitsAround === body.def.name).map((m) => this.buildBodyNode(m));
+        const dockables = this.getEconomyManager()
+          .getDockablesForBody(body.def.name)
+          .map((d) => this.buildDockableNode(d));
+        return [...moons, ...dockables];
+      },
+    };
+  }
+
+  /** A synthetic top level whose only child is "Sol" itself - matches the requested UX ("so only
+   * 1. Sol appears" when the list first opens; pressing 1 descends into Sol's own children, the
+   * star-orbiting planets/dwarf planets) rather than jumping straight to the planet list. */
+  private buildRootNode(): BreadcrumbNode {
+    return {
+      label: "",
+      select: null,
+      children: () => [
+        {
+          label: "Sol",
+          select: null,
+          children: () => this.solarSystem.bodies.filter((b) => !b.def.orbitsAround).map((b) => this.buildBodyNode(b)),
+        },
+      ],
+    };
+  }
+
+  /** Renders the LAST breadcrumbPath entry's own children as the numbered list, and the full
+   * trail (excluding the synthetic root's blank label) as the header above it. */
+  private renderBreadcrumbLevel(): void {
+    this.focusListTitleEl.textContent = this.breadcrumbPath.map((n) => n.label).filter(Boolean).join(" > ");
+    this.currentChildren = this.breadcrumbPath[this.breadcrumbPath.length - 1].children();
     this.focusListItemsEl.innerHTML = "";
-    for (const body of this.solarSystem.bodies) {
+    const focusedName = this.solarSystem.focused.def.name;
+    for (const child of this.currentChildren) {
       const li = document.createElement("li");
-      li.textContent = body.def.name;
+      li.textContent = child.label;
+      li.classList.toggle("is-focused", child.label === focusedName);
       this.focusListItemsEl.appendChild(li);
     }
   }
 
   private openList(): void {
     this.listOpen = true;
+    this.breadcrumbPath = [this.buildRootNode()];
     this.focusListEl.hidden = false;
-    for (let i = 0; i < this.focusListItemsEl.children.length; i++) {
-      this.focusListItemsEl.children[i].classList.toggle("is-focused", i === this.solarSystem.focusedIndex);
-    }
+    this.renderBreadcrumbLevel();
   }
 
   private closeList(): void {
@@ -185,12 +266,29 @@ export class SelectionUI {
       return;
     }
     if (e.code === "Escape") {
-      this.closeList();
+      // Back up one level (breadcrumbPath.length > 1, i.e. deeper than the initial "1. Sol"
+      // screen) rather than closing outright - "if they press ESC it goes up to previous level".
+      if (this.breadcrumbPath.length > 1) {
+        this.breadcrumbPath.pop();
+        this.renderBreadcrumbLevel();
+      } else {
+        this.closeList();
+      }
       return;
     }
     const digit = digitFromCode(e.code);
-    if (digit !== null && digit >= 1 && digit <= this.solarSystem.bodies.length) {
-      this.setTarget(digit - 1);
+    if (digit === null) return;
+    // Digit1..Digit9 -> slots 0..8, Digit0 -> slot 9 (a 10th slot - star-orbiting bodies alone
+    // already number 10, one more than single-digit keys 1-9 can address on their own).
+    const slotIndex = digit === 0 ? 9 : digit - 1;
+    const child = this.currentChildren[slotIndex];
+    if (!child) return;
+    child.select?.();
+    const grandchildren = child.children();
+    if (grandchildren.length > 0) {
+      this.breadcrumbPath.push(child);
+      this.renderBreadcrumbLevel();
+    } else {
       this.closeList();
     }
   }
