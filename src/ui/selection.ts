@@ -165,6 +165,21 @@ export class SelectionUI {
     this.applyPickResult(pick);
   }
 
+  /** Picks whatever's currently under the crosshair/cursor - same picking rule as a single
+   * click (reticle raycast while mouselook is engaged, since Pointer Lock freezes clientX/Y;
+   * a normal screen-position pick otherwise) - and returns its body index if it's a planet/moon,
+   * or null for a miss, a ship/asteroid, or anything else. Doesn't mutate selection state itself;
+   * used by main.ts's double-click-to-zoom flow to confirm the second click actually landed on
+   * a body before committing to fly there. */
+  pickBodyIndexUnderCursor(): number | null {
+    const pick =
+      this.isFreeCamActive() && !this.isCursorModeActive()
+        ? this.scene.pickWithRay(this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE))
+        : this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+    if (!pick?.hit || !pick.pickedMesh) return null;
+    return this.findBodyIndexForMesh(pick.pickedMesh.parent);
+  }
+
   /** Shared by both pick paths above. Checks asteroid/ship first (neither is a CelestialBody,
    * so findBodyIndexForMesh would never find them), then falls back to the original body pick:
    * sets targetIndex, and, whenever the pick actually hit body geometry (not just empty space or

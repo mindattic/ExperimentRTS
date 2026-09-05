@@ -256,6 +256,19 @@ async function main() {
     }
   });
 
+  // Double-click a planet in free cam to warp straight to it (stellar dust, same feel as the
+  // interplanetary transit below) instead of manually flying the whole way - "so I don't have to
+  // manually swim through the whole solar system". Re-picks under the cursor rather than trusting
+  // whatever's already selected, so a stray double-click on empty space (or on a body other than
+  // the one currently selected) can't fire this using a stale target.
+  canvas.addEventListener("dblclick", () => {
+    if (!freeCamActive || transiting) return;
+    const index = selectionUI.pickBodyIndexUnderCursor();
+    if (index === null) return;
+    selectionUI.setTarget(index);
+    beginFreeCamZoomTo(solarSystem.bodies[index]);
+  });
+
   function enterGroundMode() {
     groundCamera.setAnchorFromWorldPoint(orbitCamera.viewDir);
     const lastOrbitPosition = orbitCamera.camera.position.clone();
@@ -496,6 +509,10 @@ async function main() {
   // once arrived - so there's no snap/pop at any point, and the camera keeps roughly the
   // same relative viewing angle throughout ("makes sense from the camera's perspective").
   let transiting = false;
+  /** True for a transit started by beginFreeCamZoomTo (double-click a planet in free cam) - the
+   * moving camera is freeFlyCamera instead of orbitCamera, and it lands back in free cam
+   * (completeFreeCamZoom) rather than orbit mode (completeTransit). */
+  let transitFreeCamMode = false;
   let transitElapsed = 0;
   let transitTargetIndex = -1;
   const transitFromPos = new Vector3();
@@ -568,11 +585,57 @@ async function main() {
     tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
     computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
 
-    const camera = orbitCamera.camera;
+    const camera = transitFreeCamMode ? freeFlyCamera.camera : orbitCamera.camera;
     evaluateDetourPath(transitFromPos, transitControlPoint!, tmpArrivalPos, eased, camera.position);
     Quaternion.SlerpToRef(transitFromRot, tmpArrivalRot, eased, camera.rotationQuaternion!);
 
-    if (t >= 1) completeTransit(target, targetThresholds);
+    if (t >= 1) {
+      if (transitFreeCamMode) completeFreeCamZoom(target);
+      else completeTransit(target, targetThresholds);
+    }
+  }
+
+  /** Double-click-to-zoom from free cam: same warp feel as beginTransit (lerp/slerp flight,
+   * stellar dust, path-avoidance detour), but the moving camera is freeFlyCamera itself and it
+   * lands back in free cam (completeFreeCamZoom) instead of orbit mode - "so I don't have to
+   * manually swim through the whole solar system", not a mode switch. */
+  function beginFreeCamZoomTo(target: (typeof solarSystem.bodies)[number]): void {
+    if (!freeCamActive || transiting) return;
+
+    const camera = freeFlyCamera.camera;
+    transitFromPos.copyFrom(camera.globalPosition);
+    transitFromRot.copyFrom(camera.rotationQuaternion!);
+
+    const targetPos = target.orbit.spinNode.getAbsolutePosition();
+    transitApproachDir.copyFrom(transitFromPos).subtractInPlace(targetPos).normalize();
+
+    freeFlyCamera.detach(); // stop WASD/mouselook fighting the automated flight
+    camera.parent = null;
+    camera.position.copyFrom(transitFromPos);
+    camera.rotationQuaternion!.copyFrom(transitFromRot);
+
+    transitTargetIndex = solarSystem.bodies.indexOf(target);
+    transitElapsed = 0;
+    transiting = true;
+    transitFreeCamMode = true;
+
+    const targetThresholds = radiusThresholds(target.radius);
+    const estimatedArrivalPos = targetPos.add(transitApproachDir.scale(targetThresholds.defaultOrbit));
+    transitControlPoint = computeDetourControlPoint(transitFromPos, estimatedArrivalPos, otherBodyObstacles(target.def.name));
+
+    Vector3.TransformNormalToRef(Vector3.Forward(), Matrix.FromQuaternionToRef(transitFromRot, tmpTransitDustMatrix), tmpTransitDustDir);
+    stellarDust.start(tmpTransitDustDir);
+  }
+
+  function completeFreeCamZoom(target: (typeof solarSystem.bodies)[number]): void {
+    solarSystem.focusedIndex = transitTargetIndex;
+    focused = target;
+    thresholds = radiusThresholds(target.radius);
+
+    freeFlyCamera.attach(); // resumes mouselook/WASD from exactly wherever the flight ended
+    transiting = false;
+    transitFreeCamMode = false;
+    stellarDust.stop();
   }
 
   function completeTransit(target: (typeof solarSystem.bodies)[number], targetThresholds: RadiusThresholds) {
@@ -618,11 +681,14 @@ async function main() {
 
     if (groundExitCooldownRemaining > 0) groundExitCooldownRemaining -= dt;
 
-    if (freeCamActive) {
+    if (transiting) {
+      // Checked before freeCamActive: beginFreeCamZoomTo starts a transit without turning
+      // freeCamActive off (still conceptually "in free cam", just autopiloting), so this must
+      // win the dispatch or freeFlyCamera.update() would fight the transit's own lerp/slerp.
+      updateTransit(dt);
+    } else if (freeCamActive) {
       freeFlyCamera.update(dt);
       resolveFreeCamCollisions();
-    } else if (transiting) {
-      updateTransit(dt);
     } else if (mode === "ground") {
       groundCamera.update(dt, focused.radius);
     } else {
