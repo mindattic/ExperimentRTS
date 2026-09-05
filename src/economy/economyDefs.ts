@@ -74,6 +74,10 @@ export const STATION_DEFS: readonly StationDef[] = [
   { id: "marsRelay", name: "Mars High Station", faction: "solFederation", crew: 90, cargo: "Ice, water", orbitsAround: "Mars", orbitRadiusInParentRadii: 1.3 },
   { id: "venusRelay", name: "Venus Relay", faction: "solFederation", crew: 40, cargo: "Sulfur compounds", orbitsAround: "Venus", orbitRadiusInParentRadii: 1.3 },
   { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 1.3 },
+  // Gas giants have no solid ground for a Base, but a Station only ever orbits - no landable
+  // surface required - so these are the fleet's first gas-giant stops.
+  { id: "jupiterHighport", name: "Jupiter Highport", faction: "solFederation", crew: 150, cargo: "Fuel, hydrogen", orbitsAround: "Jupiter", orbitRadiusInParentRadii: 1.3 },
+  { id: "saturnRingStation", name: "Saturn Ring Station", faction: "beltConsortium", crew: 60, cargo: "Rare gases", orbitsAround: "Saturn", orbitRadiusInParentRadii: 1.3 },
 ];
 
 // Same self-check scale.ts runs for moons, applied here for stations - see
@@ -97,4 +101,11 @@ export const SHIP_DEFS: readonly ShipDef[] = [
   { id: "trader1", name: "IS Rustwind", faction: "beltConsortium", crew: 4, cargo: "Ore (80t)", cruiseSpeed: 500, route: ["Pluto", "plutoOutpost"], dwellSeconds: 20 },
   { id: "courier1", name: "MV Quickstep", faction: "solFederation", crew: 3, cargo: "Mail, small parts", cruiseSpeed: 1100, route: ["Venus", "venusRelay", "Earth"], dwellSeconds: 10 },
   { id: "trader2", name: "IS Far Horizon", faction: "beltConsortium", crew: 5, cargo: "Exotic ices (30t)", cruiseSpeed: 550, route: ["plutoOutpost", "Eris"], dwellSeconds: 25 },
+  { id: "shuttle1", name: "MV Lunar Ferry", faction: "solFederation", crew: 10, cargo: "Passengers, mail", cruiseSpeed: 750, route: ["Earth", "Moon"], dwellSeconds: 15 },
+  { id: "trader3", name: "IS Solar Wind", faction: "beltConsortium", crew: 6, cargo: "Rare metals", cruiseSpeed: 800, route: ["Mercury", "Venus", "venusRelay"], dwellSeconds: 20 },
+  // Long interplanetary hauls, chained so the belt consortium's supply line reaches all the way
+  // out to Saturn: marsRelay -> jupiterHighport -> saturnRingStation across two ships.
+  { id: "freighter4", name: "MV Deep Range", faction: "solFederation", crew: 12, cargo: "Heavy machinery", cruiseSpeed: 950, route: ["marsRelay", "jupiterHighport"], dwellSeconds: 30 },
+  { id: "trader4", name: "IS Outer Reach", faction: "beltConsortium", crew: 7, cargo: "Exotic gases", cruiseSpeed: 600, route: ["jupiterHighport", "saturnRingStation"], dwellSeconds: 25 },
+  { id: "courier2", name: "MV Swift Arrow", faction: "solFederation", crew: 3, cargo: "Priority mail", cruiseSpeed: 1200, route: ["Earth", "Mars"], dwellSeconds: 10 },
 ];

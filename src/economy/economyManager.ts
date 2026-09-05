@@ -43,7 +43,7 @@ export class EconomyManager {
       this.stations.push(station);
     }
 
-    this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0])));
+    this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0]), this.resolveStop));
   }
 
   setShipTrajectoriesVisible(visible: boolean): void {

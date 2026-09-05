@@ -9,38 +9,28 @@ export interface RendezvousResult {
 }
 
 const tmpPredicted = new Vector3();
-const tmpToCurrent = new Vector3();
 const tmpFromGameplay = new Vector3();
 const tmpToGameplay = new Vector3();
 
-/**
- * Scales `cruiseSpeed` so travelSeconds (2*distance/cruiseSpeed, see solveRendezvous) comes out
- * the same regardless of the live actual/gameplay orbital-scale blend - "the time it takes to
- * get from Mars to Jupiter is the same in both Actual and gameplay mode". Computed once at
- * departure (not re-solved live mid-flight - an accepted v1 boundary, see the class doc comment
- * on solveRendezvous for the same kind of simplifying assumption) from each dock's
- * gameplay-equivalent position: since a Base/Station's own local offset from its parent planet
- * is independent of the toggle (Bases sit at a fixed surface point; Stations are explicitly out
- * of scope - see orbitalScale.ts), only the parent planet's own position needs rescaling, which
- * orbitalScale.gameplayPositionOf already knows how to do.
- */
-export function effectiveCruiseSpeed(cruiseSpeed: number, from: Dockable, to: Dockable, fromCurrentPosition: Vector3): number {
-  to.predictWorldPositionAt(0, tmpToCurrent);
-  const currentDistance = Vector3.Distance(fromCurrentPosition, tmpToCurrent);
-
+/** Distance between `from`/`to`'s gameplay-equivalent positions (see
+ * orbitalScale.gameplayPositionOf) rather than their real, live (possibly Actual-scale-blended)
+ * ones - a Base/Station's own local offset from its parent planet is independent of the toggle
+ * (Bases sit at a fixed surface point; Stations are explicitly out of scope - see
+ * orbitalScale.ts), so only the parent planet's own position needs rescaling. */
+function gameplayEquivalentDistance(from: Dockable, fromPosition: Vector3, to: Dockable, toPosition: Vector3): number {
   orbitalScale.gameplayPositionOf(from.parentBody, tmpFromGameplay);
-  tmpFromGameplay.addInPlace(fromCurrentPosition).subtractInPlace(from.parentBody.orbit.orbitNode.position);
+  tmpFromGameplay.addInPlace(fromPosition).subtractInPlace(from.parentBody.orbit.orbitNode.position);
   orbitalScale.gameplayPositionOf(to.parentBody, tmpToGameplay);
-  tmpToGameplay.addInPlace(tmpToCurrent).subtractInPlace(to.parentBody.orbit.orbitNode.position);
-  const gameplayDistance = Vector3.Distance(tmpFromGameplay, tmpToGameplay);
-
-  return gameplayDistance > 1e-6 ? cruiseSpeed * (currentDistance / gameplayDistance) : cruiseSpeed;
+  tmpToGameplay.addInPlace(toPosition).subtractInPlace(to.parentBody.orbit.orbitNode.position);
+  return Vector3.Distance(tmpFromGameplay, tmpToGameplay);
 }
 
 /**
  * Solves for how long a ship flying with peak speed `cruiseSpeed` (the flip-and-burn flight
  * profile below - peak speed occurs at the flip point, not a constant cruise) takes to
- * intercept a moving `destination`, and where that interception point actually is.
+ * intercept a moving `destination`, and where that interception point actually is - `origin` is
+ * only used to keep travel time invariant across the Actual/Gameplay orbital-scale toggle (see
+ * gameplayEquivalentDistance), never to change the destination flown to.
  *
  * Circular dependency: travel time depends on distance to the *predicted future* point, which
  * itself depends on travel time. Solved by fixed-point iteration (an initial "destination
@@ -48,14 +38,35 @@ export function effectiveCruiseSpeed(cruiseSpeed: number, from: Dockable, to: Do
  * valid because every orbit in this game is near-circular/low-eccentricity (scale.ts caps
  * eccentricity at 0.02 system-wide) and ship cruise speeds are tuned so travelSeconds stays
  * well under the destination's own orbital period, so each pass's correction shrinks fast.
+ *
+ * Travel time itself is computed from the GAMEPLAY-equivalent distance to the same converged
+ * intercept point, not the real (possibly Actual-scale) one - "the time it takes to get from
+ * Mars to Jupiter is the same in both Actual and gameplay mode" - so the ship still physically
+ * flies to and arrives at the true, real intercept point (arrivalPosition), only its DURATION is
+ * rescaled. An earlier version of this rescaled `cruiseSpeed` by a separately-snapshotted
+ * distance ratio instead of folding it into this same iteration - only an approximation for a
+ * fast-moving destination over a long flight, since that snapshot and this solve's own converged
+ * intercept point aren't generally the same point. Iterating on the gameplay-equivalent distance
+ * directly, at the SAME point this loop already converges to, is exact instead.
+ * @param leadSeconds How far in the future `departurePosition` already is (0 if solving right at
+ * departure, or however long a dwell period remains if pre-planned ahead of time - see
+ * Ship.planNextLeg) - shifts the whole prediction window so `destination`'s position is always
+ * evaluated at (leadSeconds + travelSeconds) from now, not travelSeconds from now.
  */
-export function solveRendezvous(departurePosition: Vector3, destination: Dockable, cruiseSpeed: number, iterations = 3): RendezvousResult {
-  destination.predictWorldPositionAt(0, tmpPredicted);
-  let travelSeconds = (2 * Vector3.Distance(departurePosition, tmpPredicted)) / cruiseSpeed;
+export function solveRendezvous(
+  origin: Dockable,
+  departurePosition: Vector3,
+  destination: Dockable,
+  cruiseSpeed: number,
+  leadSeconds = 0,
+  iterations = 3,
+): RendezvousResult {
+  destination.predictWorldPositionAt(leadSeconds, tmpPredicted);
+  let travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
 
   for (let i = 0; i < iterations; i++) {
-    destination.predictWorldPositionAt(travelSeconds, tmpPredicted);
-    travelSeconds = (2 * Vector3.Distance(departurePosition, tmpPredicted)) / cruiseSpeed;
+    destination.predictWorldPositionAt(leadSeconds + travelSeconds, tmpPredicted);
+    travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
   }
 
   return { arrivalPosition: tmpPredicted.clone(), travelSeconds };
