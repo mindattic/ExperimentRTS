@@ -328,12 +328,25 @@ export class OrbitTrackballCamera {
   update(deltaSeconds: number): void {
     let keyYaw = 0;
     let keyPitch = 0;
+    let keyRoll = 0;
     if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
     if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
     if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
     if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
+    if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
+    if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
     if (keyYaw !== 0 || keyPitch !== 0) {
       this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
+      this.reorienting = false;
+    }
+    if (keyRoll !== 0) {
+      // Tumbles `up` around the current view axis - unlike yaw/pitch (rotateStep), this never
+      // touches viewDir itself, so it doesn't change which point on the planet is centered in
+      // view, only the camera's own tilt.
+      Quaternion.RotationAxisToRef(this.viewDir, keyRoll * KEY_ROTATE_SPEED * deltaSeconds, tmpQuat);
+      Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
+      Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
+      this.up.normalize();
       this.reorienting = false;
     }
 

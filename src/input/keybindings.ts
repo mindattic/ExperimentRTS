@@ -3,6 +3,8 @@ export type Action =
   | "orbitYawRight"
   | "orbitPitchUp"
   | "orbitPitchDown"
+  | "orbitRollLeft"
+  | "orbitRollRight"
   | "groundForward"
   | "groundBackward"
   | "groundLeft"
@@ -26,6 +28,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   orbitYawRight: "Orbit: yaw right",
   orbitPitchUp: "Orbit: pitch up",
   orbitPitchDown: "Orbit: pitch down",
+  orbitRollLeft: "Orbit: roll left",
+  orbitRollRight: "Orbit: roll right",
   groundForward: "Ground: forward",
   groundBackward: "Ground: backward",
   groundLeft: "Ground: strafe left",
@@ -50,6 +54,12 @@ const DEFAULTS: Record<Action, string> = {
   orbitYawRight: "KeyD",
   orbitPitchUp: "KeyW",
   orbitPitchDown: "KeyS",
+  // Shares KeyQ/KeyE with groundRotateLeft/groundRotateRight and moveDown/moveUp - safe because
+  // orbit/ground/free-cam are mutually exclusive modes, same "one physical key, mode-gated
+  // behaviors" pattern as Space above. Rolling doesn't change which point on the planet is
+  // centered in view, just tumbles the camera's own up vector around that view axis.
+  orbitRollLeft: "KeyQ",
+  orbitRollRight: "KeyE",
   groundForward: "KeyW",
   groundBackward: "KeyS",
   groundLeft: "KeyA",
@@ -57,9 +67,6 @@ const DEFAULTS: Record<Action, string> = {
   groundRotateLeft: "KeyQ",
   groundRotateRight: "KeyE",
   reorient: "KeyR",
-  // Shares KeyE/KeyQ with groundRotateRight/groundRotateLeft - safe because those only fire in
-  // ground mode (RtsGroundCamera) while moveUp/moveDown only matter in free cam - same "one
-  // physical key, mode-gated behaviors" pattern as Space above.
   moveUp: "KeyE",
   moveDown: "KeyQ",
   freeCam: "KeyF",

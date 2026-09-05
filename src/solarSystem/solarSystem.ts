@@ -115,20 +115,24 @@ export class SolarSystem {
 
   /**
    * Updates every body's orbit/spin (cheap transform math), the belt's shared rotation, and
-   * the sun's direction relative to the focused body (or `sunReferenceBody`, if given) - but
+   * the sun's direction relative to the focused body (or `sunDirectionOverride`, if given) - but
    * only runs the focused body's terrain LOD/generation queue at full fidelity. Pass the
    * camera's position local to the focused body's spinNode (same convention PlanetTerrain.update
    * already expects).
    *
-   * @param sunReferenceBody Lights relative to this body instead of `focused` - used mid-transit
-   * (main.ts's beginTransit/beginFreeCamZoomTo), where `focused` deliberately stays the
-   * departure body until arrival (terrain LOD/ground-mode thresholds need that), but the sun
-   * should already be tracking whichever body is actually being approached - otherwise the
-   * target planet keeps the departure body's stale day/night angle for the whole flight and
-   * only snaps correct the instant it completes ("when flying towards a planet it doesn't
-   * update the lighting on the planet").
+   * @param sunDirectionOverride Lights using this precomputed direction instead of deriving one
+   * from `focused` - used mid-transit (main.ts's beginTransit/beginFreeCamZoomTo), where
+   * `focused` deliberately stays the departure body until arrival (terrain LOD/ground-mode
+   * thresholds need that), but the sun should already be tracking whichever body is actually
+   * being approached - otherwise the target planet keeps the departure body's stale day/night
+   * angle for the whole flight and only snaps correct the instant it completes ("when flying
+   * towards a planet it doesn't update the lighting on the planet"). Callers blend this smoothly
+   * between the departure and destination bodies' own directions over the flight (see
+   * transitSunDirOverride's own comment) rather than switching abruptly the instant the flight
+   * begins, which read as a sudden, jarring change ("why does the planet light up when double
+   * clicked?").
    */
-  update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight, sunReferenceBody?: CelestialBody): void {
+  update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight, sunDirectionOverride?: Vector3): void {
     for (const body of this.bodies) {
       body.orbit.update(deltaSeconds);
     }
@@ -136,7 +140,11 @@ export class SolarSystem {
 
     this.focused.terrain?.update(focusedCameraLocalPosition);
 
-    (sunReferenceBody ?? this.focused).orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
-    sun.direction.copyFrom(tmpSunDirection);
+    if (sunDirectionOverride) {
+      sun.direction.copyFrom(sunDirectionOverride);
+    } else {
+      this.focused.orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
+      sun.direction.copyFrom(tmpSunDirection);
+    }
   }
 }

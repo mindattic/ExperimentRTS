@@ -540,6 +540,25 @@ async function main() {
   const tmpTransitDustMatrix = new Matrix();
   const tmpTransitDustDir = new Vector3();
   let transitControlPoint: Vector3 | null = null;
+  const tmpDepartureSunDir = new Vector3();
+  const tmpDestinationSunDir = new Vector3();
+  /** Set by updateTransit each frame (orbitBody arrival only) to the sun direction blended
+   * between the departure and destination bodies at the same eased progress as the camera
+   * blend, and read by the render loop's lighting dispatch instead of snapping straight to the
+   * destination - without this, the sun direction update in main.ts's transiting branch snaps to
+   * the destination body's angle the INSTANT the flight begins, so the target planet's lit
+   * hemisphere pops to a different angle over a single frame ("why does the planet light up when
+   * double clicked?"). Approximated as lerp+renormalize rather than a true spherical
+   * interpolation - visually indistinguishable for the angle differences involved here, and
+   * cheaper. */
+  let transitSunDirOverride: Vector3 | null = null;
+  /** Set once at transit start (beginTransit/beginFreeCamZoomTo) - the "orbitBody" arrival
+   * radius, recomputed live around the target's current position every frame in updateTransit.
+   * Kept as a plain radius (not a factor) since it's cheaper to precompute once than to re-derive
+   * per frame, and lets the two entry points park at different distances: beginTransit (old
+   * interplanetary Tab/Space) keeps radiusThresholds' defaultOrbit, while beginFreeCamZoomTo uses
+   * FOCUS_MODE_ORBIT_RADIUS_FACTOR so double-click and double-tap-F park at the same distance. */
+  let transitArrivalRadius = 0;
 
   function beginTransit() {
     if (mode !== "orbit" || transiting || freeCamActive) return;
@@ -572,9 +591,8 @@ async function main() {
     // already good enough to route around anything genuinely in the way.
     const target = solarSystem.bodies[targetIndex];
     const targetThresholds = radiusThresholds(target.radius);
-    const estimatedArrivalPos = target.orbit.spinNode
-      .getAbsolutePosition()
-      .add(transitApproachDir.scale(targetThresholds.defaultOrbit));
+    transitArrivalRadius = targetThresholds.defaultOrbit;
+    const estimatedArrivalPos = target.orbit.spinNode.getAbsolutePosition().add(transitApproachDir.scale(transitArrivalRadius));
     transitControlPoint = computeDetourControlPoint(transitFromPos, estimatedArrivalPos, otherBodyObstacles(focused.def.name, target.def.name));
 
     // Streaks stream backward relative to the direction the camera is coasting toward - since
@@ -595,16 +613,25 @@ async function main() {
     if (transitArrivalMode === "away") {
       tmpArrivalPos.copyFrom(transitAwayArrivalPos);
       tmpArrivalRot.copyFrom(transitAwayArrivalRot);
+      transitSunDirOverride = null; // no destination body to blend toward - focused hasn't changed
     } else {
       target = solarSystem.bodies[transitTargetIndex];
       targetThresholds = radiusThresholds(target.radius);
       const targetWorldPos = target.orbit.spinNode.getAbsolutePosition();
-      tmpArrivalPos.copyFrom(targetWorldPos).addInPlace(transitApproachDir.scale(targetThresholds.defaultOrbit));
+      tmpArrivalPos.copyFrom(targetWorldPos).addInPlace(transitApproachDir.scale(transitArrivalRadius));
       // Camera arrives on the near side (along transitApproachDir from the target) looking back
       // toward it, i.e. forward is the opposite direction - see lookRotation.ts for why this
       // goes through computeLookRotationToRef rather than Babylon's own FromLookDirectionLHToRef.
       tmpArrivalForward.copyFrom(transitApproachDir).scaleInPlace(-1);
       computeLookRotationToRef(tmpArrivalForward, Vector3.Up(), tmpArrivalRot);
+
+      // Smoothly blend the sun direction from the departure body's angle to the destination's,
+      // at the same eased progress as everything else - see transitSunDirOverride's own comment.
+      focused.orbit.sunDirectionTo(Vector3.Zero(), tmpDepartureSunDir);
+      target.orbit.sunDirectionTo(Vector3.Zero(), tmpDestinationSunDir);
+      Vector3.LerpToRef(tmpDepartureSunDir, tmpDestinationSunDir, eased, tmpDestinationSunDir);
+      tmpDestinationSunDir.normalize();
+      transitSunDirOverride = tmpDestinationSunDir;
     }
 
     // beginFreeCamZoomAway always moves orbitCamera.camera (whichever camera was active for
@@ -617,15 +644,16 @@ async function main() {
 
     if (t >= 1) {
       if (transitArrivalMode === "away") completeZoomAway();
-      else if (transitFreeCamMode) completeFreeCamZoom(target!);
       else completeTransit(target!, targetThresholds!);
     }
   }
 
   /** Double-click-to-zoom from free cam: same warp feel as beginTransit (lerp/slerp flight,
-   * stellar dust, path-avoidance detour), but the moving camera is freeFlyCamera itself and it
-   * lands back in free cam (completeFreeCamZoom) instead of orbit mode - "so I don't have to
-   * manually swim through the whole solar system", not a mode switch. */
+   * stellar dust, path-avoidance detour), but the moving camera is freeFlyCamera itself, and it
+   * now lands in focus/orbit mode around the target (completeTransit) instead of free cam -
+   * "when double click flight to planet ends; automatically focus on planet" - so "I don't have
+   * to manually swim through the whole solar system" AND arrive already oriented/parked on it,
+   * rather than needing a separate double-tap-F afterward. */
   function beginFreeCamZoomTo(target: (typeof solarSystem.bodies)[number]): void {
     if (!freeCamActive || transiting) return;
 
@@ -646,24 +674,16 @@ async function main() {
     transiting = true;
     transitFreeCamMode = true;
     transitArrivalMode = "orbitBody";
+    // Parks at the same fixed "focus mode" distance double-tapping F does (see
+    // enterOrbitFromFreeCam), not radiusThresholds' defaultOrbit - double-click and double-tap-F
+    // both mean "commit to focus mode", so they should land at the same distance.
+    transitArrivalRadius = target.radius * FOCUS_MODE_ORBIT_RADIUS_FACTOR;
 
-    const targetThresholds = radiusThresholds(target.radius);
-    const estimatedArrivalPos = targetPos.add(transitApproachDir.scale(targetThresholds.defaultOrbit));
+    const estimatedArrivalPos = targetPos.add(transitApproachDir.scale(transitArrivalRadius));
     transitControlPoint = computeDetourControlPoint(transitFromPos, estimatedArrivalPos, otherBodyObstacles(target.def.name));
 
     Vector3.TransformNormalToRef(Vector3.Forward(), Matrix.FromQuaternionToRef(transitFromRot, tmpTransitDustMatrix), tmpTransitDustDir);
     stellarDust.start(tmpTransitDustDir);
-  }
-
-  function completeFreeCamZoom(target: (typeof solarSystem.bodies)[number]): void {
-    solarSystem.focusedIndex = transitTargetIndex;
-    focused = target;
-    thresholds = radiusThresholds(target.radius);
-
-    freeFlyCamera.attach(); // resumes mouselook/WASD from exactly wherever the flight ended
-    transiting = false;
-    transitFreeCamMode = false;
-    stellarDust.stop();
   }
 
   /** ESC-triggered exit from orbit/orbitEntity ("focus mode") back to free cam: instead of an
@@ -742,11 +762,18 @@ async function main() {
     Vector3.TransformCoordinatesToRef(Vector3.Up(), tmpInvMatrix, tmpLocalUp);
     tmpLocalUp.normalize();
 
+    // Only meaningful when this transit started from free cam (beginFreeCamZoomTo) - harmless
+    // no-ops for the old orbit-to-orbit interplanetary beginTransit, which never set these.
+    freeFlyCamera.detach();
+    freeCamActive = false;
+    freeCamBadge.hidden = true;
+    freeCamReticle.hidden = true;
+
     orbitCamera.trackWorldPosition(null);
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.setViewDirFromWorldPoint(tmpLocalViewDir);
     orbitCamera.up.copyFrom(tmpLocalUp);
-    orbitCamera.setRadius(thresholds.defaultOrbit);
+    orbitCamera.setRadius(Math.min(thresholds.maxOrbit, Math.max(thresholds.minOrbit, transitArrivalRadius)));
     orbitCamera.setRadiusLimits(thresholds.minOrbit, thresholds.maxOrbit);
 
     if (target.landable && target.heightfield) {
@@ -755,6 +782,8 @@ async function main() {
     }
 
     orbitCamera.attach();
+    mode = "orbit";
+    planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
     transiting = false;
     stellarDust.stop();
   }
@@ -800,13 +829,10 @@ async function main() {
     if (transiting) {
       // Keep every body's orbit/spin advancing during transit (including the live target),
       // but skip terrain LOD work - camera position isn't meaningful in any body's local
-      // frame while it's unparented mid-flight. Light relative to the actual destination (not
-      // the stale departure `focused`, which only updates on arrival) so the target planet's
-      // day/night angle is already correct throughout the approach, not just the instant it
-      // completes - see SolarSystem.update's sunReferenceBody param. "away" flights have no
-      // destination body (just backing off from the same one), so focused is already right.
-      const lightingTarget = transitArrivalMode === "orbitBody" ? solarSystem.bodies[transitTargetIndex] : undefined;
-      solarSystem.update(dt, Vector3.Zero(), sun, lightingTarget);
+      // frame while it's unparented mid-flight. Lights using the smoothly-blended direction
+      // updateTransit just computed (see transitSunDirOverride's own comment) - "away" flights
+      // have no destination body to blend toward, so focused (unchanged) is already right.
+      solarSystem.update(dt, Vector3.Zero(), sun, transitSunDirOverride ?? undefined);
     } else if (freeCamActive || mode === "orbitEntity") {
       // Both free cam and orbitEntity (tracking a moving ship/asteroid) are unparented/world-
       // space, so the focused body's terrain still needs its camera position converted into
