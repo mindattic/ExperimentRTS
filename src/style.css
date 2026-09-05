@@ -485,3 +485,49 @@ body {
 .hover-label[hidden] {
   display: none;
 }
+
+.body-icons-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none; /* only individual .body-icon buttons re-enable clicks */
+}
+
+.body-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* transform is set entirely by JS each frame (translate(x, y) translate(-50%, -50%) - the
+     latter centers the icon on that exact point, independent of the former) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.body-icon[hidden] {
+  display: none;
+}
+
+.body-icon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cfd8ff;
+  border: 1px solid rgba(20, 20, 24, 0.8);
+  box-shadow: 0 0 4px rgba(207, 216, 255, 0.9);
+}
+
+.body-icon-label {
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e8e8e8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}

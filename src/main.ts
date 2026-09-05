@@ -24,6 +24,7 @@ import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmap
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI, type SelectedEntity } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
+import { BodyIconsUI } from "./ui/bodyIcons";
 import { EconomyManager } from "./economy/economyManager";
 import { ExamineUI } from "./ui/examineUI";
 import { SettingsMenu } from "./ui/settingsMenu";
@@ -195,6 +196,7 @@ async function main() {
     () => transiting,
   );
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
+  const bodyIconsUI = new BodyIconsUI(solarSystem, scene, engine, () => transiting, (index) => selectionUI.setTarget(index));
   const economyManager = new EconomyManager(scene, solarSystem);
   const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
 
@@ -430,6 +432,11 @@ async function main() {
     scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
+    // Google Earth-style by default in focus mode: up stays locked to the body's own polar axis
+    // (planeAxis, interpreted in spinNode's local frame - see setPlaneLocked's own comment), so
+    // dragging is pure yaw/pitch with no accumulating roll/tumble - still toggleable with the
+    // lockPlane key (P) if free-tumble is wanted instead.
+    orbitCamera.setPlaneLocked(true);
     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
 
     if (target.landable && target.heightfield) {
@@ -783,6 +790,8 @@ async function main() {
 
     orbitCamera.attach();
     mode = "orbit";
+    // Google Earth-style by default in focus mode - see enterOrbitFromFreeCam's own comment.
+    orbitCamera.setPlaneLocked(true);
     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
     transiting = false;
     stellarDust.stop();
@@ -939,6 +948,7 @@ async function main() {
     // pointer position, so it isn't affected by Pointer Lock freezing the cursor.
     selectionUI.update();
     selectionUI.updateHoverLabel();
+    bodyIconsUI.update();
     economyManager.update(dt, scene.activeCamera!.globalPosition);
     examineUI.update();
 

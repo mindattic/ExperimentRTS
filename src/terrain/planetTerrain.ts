@@ -4,6 +4,7 @@ import { PlanetHeightfield } from "./heightfield";
 import { buildPatchMesh } from "./patchMesh";
 import { QuadNode } from "./quadNode";
 import { graphicsSettings } from "../settings/graphicsSettings";
+import { AU_IN_SCENE_UNITS } from "../solarSystem/scale";
 
 const MAX_DEPTH = 9;
 const SPLIT_FACTOR = 2.0;
@@ -15,6 +16,32 @@ const MAX_PATCHES_PER_FRAME = 3;
  * At depth 6, 6*4^6 = ~24,576 patches is still a genuinely heavy preview, but is at least
  * plausible to actually render. */
 const FORCE_DETAIL_MAX_DEPTH = 6;
+
+/** Distance-from-camera-to-body-center (scene units) -> max allowed quadtree depth, computed
+ * once at module load rather than re-derived every frame - "planets should be full resolution
+ * until they are greater than 1 AU away from player camera; then the level of detail drops off
+ * with increased distance ... precalculate those LOD changes so that it doesn't dynamically do
+ * it every time it needs to drop LOD". Within 1 AU, this never constrains anything (maxDepthFor
+ * returns MAX_DEPTH, the existing per-patch relative SPLIT_FACTOR/MERGE_FACTOR logic is already
+ * the effective limit); beyond it, this caps the WHOLE planet's depth regardless of how close an
+ * individual patch's own distance heuristic might otherwise allow, tapering off geometrically
+ * (each breakpoint doubles the distance and halves the depth) so distant, no-longer-orbited
+ * bodies don't keep paying for terrain detail nobody's close enough to see. Beyond the last
+ * breakpoint, capped at 0 (a single coarse patch per cube face). */
+const LOD_DISTANCE_BREAKPOINTS: ReadonlyArray<{ readonly distance: number; readonly maxDepth: number }> = [
+  { distance: AU_IN_SCENE_UNITS * 1, maxDepth: MAX_DEPTH },
+  { distance: AU_IN_SCENE_UNITS * 2, maxDepth: 6 },
+  { distance: AU_IN_SCENE_UNITS * 4, maxDepth: 4 },
+  { distance: AU_IN_SCENE_UNITS * 8, maxDepth: 2 },
+  { distance: AU_IN_SCENE_UNITS * 16, maxDepth: 1 },
+];
+
+function maxDepthForDistance(distanceToCameraFromCenter: number): number {
+  for (const breakpoint of LOD_DISTANCE_BREAKPOINTS) {
+    if (distanceToCameraFromCenter <= breakpoint.distance) return breakpoint.maxDepth;
+  }
+  return 0;
+}
 
 /**
  * Cube-sphere quadtree LOD terrain: 6 root faces, each recursively subdividing near the
@@ -63,8 +90,13 @@ export class PlanetTerrain {
    */
   update(cameraPosition: Vector3): void {
     this.processGenerationQueue();
+    // cameraPosition is already local to this body's own parent node (spinNode), i.e. the
+    // body's center is the local-frame origin - its length() IS the camera's distance to the
+    // body's center, no extra computation needed. Depends only on this, not any individual
+    // patch, so it's the same for every patch this frame - computed once here, not per-visit().
+    const globalMaxDepth = maxDepthForDistance(cameraPosition.length());
     for (const root of this.roots) {
-      this.visit(root, cameraPosition);
+      this.visit(root, cameraPosition, globalMaxDepth);
     }
   }
 
@@ -98,7 +130,7 @@ export class PlanetTerrain {
     node.boundingRadius = boundingRadius;
   }
 
-  private visit(node: QuadNode, cameraPosition: Vector3): void {
+  private visit(node: QuadNode, cameraPosition: Vector3, globalMaxDepth: number): void {
     if (!node.mesh || !node.center) return;
 
     const distance = Vector3.Distance(cameraPosition, node.center);
@@ -107,8 +139,14 @@ export class PlanetTerrain {
 
     if (node.children) {
       const allReady = node.children.every((c) => c.mesh !== null);
+      // Depth-capped children (their own depth already at globalMaxDepth) never get to split
+      // further regardless of distance, but existing deeper children from before the camera
+      // moved farther away still need to merge back up - forcing a merge here (independent of
+      // the usual MERGE_FACTOR distance check) is what actually enforces the 1 AU falloff,
+      // rather than just preventing new splits past it.
+      const overDepthCap = node.children[0].depth > globalMaxDepth;
       if (allReady) {
-        if (!forceMaxDetail && distance > node.boundingRadius * MERGE_FACTOR) {
+        if (!forceMaxDetail && (overDepthCap || distance > node.boundingRadius * MERGE_FACTOR)) {
           // Merging back to the parent patch. Re-enable the parent BEFORE disposing the
           // children (rather than after, alongside them) - otherwise, for the one frame the
           // merge triggers on, the parent is already disabled from a prior frame and the
@@ -121,7 +159,7 @@ export class PlanetTerrain {
           node.mesh.setEnabled(false);
           for (const child of node.children) {
             child.mesh!.setEnabled(true);
-            this.visit(child, cameraPosition);
+            this.visit(child, cameraPosition, globalMaxDepth);
           }
         }
       } else {
@@ -132,7 +170,7 @@ export class PlanetTerrain {
       }
     } else {
       node.mesh.setEnabled(true);
-      const maxDepth = forceMaxDetail ? FORCE_DETAIL_MAX_DEPTH : MAX_DEPTH;
+      const maxDepth = forceMaxDetail ? FORCE_DETAIL_MAX_DEPTH : Math.min(MAX_DEPTH, globalMaxDepth);
       const shouldSplit = forceMaxDetail || distance < node.boundingRadius * SPLIT_FACTOR;
       if (shouldSplit && node.depth < maxDepth) {
         node.children = node.createChildren();

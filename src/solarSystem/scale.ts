@@ -32,6 +32,10 @@ export function sceneDistance(au: number): number {
   return EARTH_DISTANCE * Math.pow(au, 0.72);
 }
 
+/** 1 AU in scene units - computed once here rather than re-deriving `sceneDistance(1)` wherever
+ * a real-world distance threshold is needed (e.g. terrain.ts's LOD distance breakpoints). */
+export const AU_IN_SCENE_UNITS = sceneDistance(1);
+
 /** Single knob for "speed everything up/down" requests - divides every period (both orbit and
  * axial spin) by SPEED_MULTIPLIER, so 0.1 means "10x slower" and 3 means "3x faster". Currently
  * 3, tuned so a full Earth year takes 10 minutes ("make the simulation run fast, so you can
