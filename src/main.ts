@@ -787,8 +787,13 @@ async function main() {
     if (transiting) {
       // Keep every body's orbit/spin advancing during transit (including the live target),
       // but skip terrain LOD work - camera position isn't meaningful in any body's local
-      // frame while it's unparented mid-flight.
-      solarSystem.update(dt, Vector3.Zero(), sun);
+      // frame while it's unparented mid-flight. Light relative to the actual destination (not
+      // the stale departure `focused`, which only updates on arrival) so the target planet's
+      // day/night angle is already correct throughout the approach, not just the instant it
+      // completes - see SolarSystem.update's sunReferenceBody param. "away" flights have no
+      // destination body (just backing off from the same one), so focused is already right.
+      const lightingTarget = transitArrivalMode === "orbitBody" ? solarSystem.bodies[transitTargetIndex] : undefined;
+      solarSystem.update(dt, Vector3.Zero(), sun, lightingTarget);
     } else if (freeCamActive || mode === "orbitEntity") {
       // Both free cam and orbitEntity (tracking a moving ship/asteroid) are unparented/world-
       // space, so the focused body's terrain still needs its camera position converted into

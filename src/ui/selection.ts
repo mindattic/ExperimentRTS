@@ -7,7 +7,6 @@ const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body
 
 const CLICK_MOVE_THRESHOLD_PX = 6;
 const MIN_RETICLE_SIZE = 24;
-const MAX_RETICLE_SIZE = 180;
 
 const tmpInvMatrix = new Matrix();
 const tmpLocalPoint = new Vector3();
@@ -285,24 +284,33 @@ export class SelectionUI {
     const camera = this.scene.activeCamera;
     if (!camera) return;
 
-    const viewport = camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
-    const transform = this.scene.getTransformMatrix();
-    const screenCenter = Vector3.Project(center, Matrix.Identity(), transform, viewport);
-    // Small tolerance: at this scene's scale, Project()'s z routinely comes out a hair past 1
-    // (e.g. 1.0000115) from float precision even for targets nowhere near the far plane - a
-    // strict > 1 check was hiding the reticle for legitimately-visible, in-front targets.
-    if (screenCenter.z < -0.01 || screenCenter.z > 1.01) {
-      // Behind the camera.
+    // Project()'s clip-space z isn't a reliable "is this behind the camera" signal on its own -
+    // a point behind the eye can still land inside [0,1] after the perspective divide (observed
+    // live: rotating 180 degrees away from a selected body left its reticle rendered wherever it
+    // happened to project to, not hidden). A dot product against the camera's actual forward
+    // direction is the robust check - only ever positive for something genuinely in front.
+    const toTarget = center.subtract(camera.globalPosition);
+    if (Vector3.Dot(toTarget, camera.getDirection(Vector3.Forward())) <= 0) {
       this.reticleEl.hidden = true;
       return;
     }
 
-    const edgePoint = center.add(Vector3.Up().scale(body.radius));
+    const viewport = camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
+    const transform = this.scene.getTransformMatrix();
+    const screenCenter = Vector3.Project(center, Matrix.Identity(), transform, viewport);
+
+    // Camera-right (not world-up) for the edge offset: world-up degenerates to nearly zero
+    // apparent size when looking straight up/down at the target (it's then almost parallel to
+    // the view direction), where right never can be - and measuring the full 2D screen-space
+    // distance (not just the Y difference) keeps this correct under any camera roll too.
+    const edgePoint = center.add(camera.getDirection(Vector3.Right()).scale(body.radius));
     const screenEdge = Vector3.Project(edgePoint, Matrix.Identity(), transform, viewport);
-    const apparentRadius = Math.abs(screenCenter.y - screenEdge.y);
-    // Corners sit outside the planet's silhouette, not overlapping it: box half-size is
-    // ~1.7x the apparent radius, giving clear margin between the bracket and the body itself.
-    const size = Math.min(MAX_RETICLE_SIZE, Math.max(MIN_RETICLE_SIZE, apparentRadius * 3.4));
+    const apparentRadius = Math.hypot(screenEdge.x - screenCenter.x, screenEdge.y - screenCenter.y);
+    // Corners sit outside the planet's silhouette, not overlapping it: box half-size is ~1.7x
+    // the apparent radius, giving clear margin between the bracket and the body itself. No upper
+    // clamp - "the corners should frame the planet perfectly regardless of distance"; only a
+    // small floor so it doesn't collapse to a literal 0px box once genuinely too far to matter.
+    const size = Math.max(MIN_RETICLE_SIZE, apparentRadius * 3.4);
 
     this.reticleEl.hidden = false;
     this.reticleEl.style.transform = `translate(${screenCenter.x - size / 2}px, ${screenCenter.y - size / 2}px)`;

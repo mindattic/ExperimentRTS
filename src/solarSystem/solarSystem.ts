@@ -115,11 +115,20 @@ export class SolarSystem {
 
   /**
    * Updates every body's orbit/spin (cheap transform math), the belt's shared rotation, and
-   * the sun's direction relative to the focused body - but only runs the focused body's
-   * terrain LOD/generation queue at full fidelity. Pass the camera's position local to the
-   * focused body's spinNode (same convention PlanetTerrain.update already expects).
+   * the sun's direction relative to the focused body (or `sunReferenceBody`, if given) - but
+   * only runs the focused body's terrain LOD/generation queue at full fidelity. Pass the
+   * camera's position local to the focused body's spinNode (same convention PlanetTerrain.update
+   * already expects).
+   *
+   * @param sunReferenceBody Lights relative to this body instead of `focused` - used mid-transit
+   * (main.ts's beginTransit/beginFreeCamZoomTo), where `focused` deliberately stays the
+   * departure body until arrival (terrain LOD/ground-mode thresholds need that), but the sun
+   * should already be tracking whichever body is actually being approached - otherwise the
+   * target planet keeps the departure body's stale day/night angle for the whole flight and
+   * only snaps correct the instant it completes ("when flying towards a planet it doesn't
+   * update the lighting on the planet").
    */
-  update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight): void {
+  update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight, sunReferenceBody?: CelestialBody): void {
     for (const body of this.bodies) {
       body.orbit.update(deltaSeconds);
     }
@@ -127,7 +136,7 @@ export class SolarSystem {
 
     this.focused.terrain?.update(focusedCameraLocalPosition);
 
-    this.focused.orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
+    (sunReferenceBody ?? this.focused).orbit.sunDirectionTo(Vector3.Zero(), tmpSunDirection);
     sun.direction.copyFrom(tmpSunDirection);
   }
 }
