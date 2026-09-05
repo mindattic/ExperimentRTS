@@ -1,6 +1,7 @@
 import { AbstractEngine, Matrix, type Node, type PickingInfo, Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
 import type { FreeFlyCamera } from "../camera/freeFlyCamera";
+import type { EconomyManager } from "../economy/economyManager";
 
 const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body's orbit
 
@@ -10,6 +11,16 @@ const MAX_RETICLE_SIZE = 180;
 
 const tmpInvMatrix = new Matrix();
 const tmpLocalPoint = new Vector3();
+const tmpEntityPos = new Vector3();
+
+/** A selected ship or asteroid - deliberately decoupled from Ship/AsteroidBelt's own shapes
+ * (just "a name" and "a way to get its current world position each frame"), same spirit as the
+ * economy layer's own Dockable interface, so this class doesn't need to know their internals. */
+export type SelectedEntity = {
+  kind: "ship" | "asteroid";
+  name: string;
+  getWorldPosition: () => Vector3;
+};
 
 function digitFromCode(code: string): number | null {
   const match = /^Digit(\d)$/.exec(code);
@@ -30,6 +41,9 @@ export class SelectionUI {
    * whenever a pick actually hits body geometry (not just its bounding region); consumed by
    * main.ts's "Alt+Space: jump straight to RTS view at this exact spot" flow. */
   selectedSurfacePoint: { bodyIndex: number; localDir: Vector3 } | null = null;
+  /** A selected ship/asteroid - mutually exclusive with targetIndex (selecting one clears the
+   * other, so exactly one thing is ever selected at a time). */
+  selectedEntity: SelectedEntity | null = null;
 
   private readonly solarSystem: SolarSystem;
   private readonly scene: Scene;
@@ -41,8 +55,9 @@ export class SelectionUI {
   private readonly reticleEl: HTMLElement;
   private readonly reticleLabelEl: HTMLElement;
   private readonly orbitFocusLabelEl: HTMLElement;
-  private readonly isOrbitMode: () => boolean;
+  private readonly getFocusLabel: () => string | null;
   private readonly isCursorModeActive: () => boolean;
+  private readonly getEconomyManager: () => EconomyManager;
   private listOpen = false;
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -54,16 +69,18 @@ export class SelectionUI {
     canvas: HTMLCanvasElement,
     freeFlyCamera: FreeFlyCamera,
     isFreeCamActive: () => boolean,
-    isOrbitMode: () => boolean,
+    getFocusLabel: () => string | null,
     isCursorModeActive: () => boolean,
+    getEconomyManager: () => EconomyManager,
   ) {
     this.solarSystem = solarSystem;
     this.scene = scene;
     this.engine = engine;
     this.freeFlyCamera = freeFlyCamera;
     this.isFreeCamActive = isFreeCamActive;
-    this.isOrbitMode = isOrbitMode;
+    this.getFocusLabel = getFocusLabel;
     this.isCursorModeActive = isCursorModeActive;
+    this.getEconomyManager = getEconomyManager;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
@@ -148,12 +165,34 @@ export class SelectionUI {
     this.applyPickResult(pick);
   }
 
-  /** Shared by both pick paths above - sets targetIndex, and, whenever the pick actually hit
-   * body geometry (not just empty space or the region outside the mesh), also records the
-   * specific surface point as a body-local unit direction (converted via the body's spinNode
-   * inverse world matrix) so it stays valid as the body spins/orbits after the fact. */
+  /** Shared by both pick paths above. Checks asteroid/ship first (neither is a CelestialBody,
+   * so findBodyIndexForMesh would never find them), then falls back to the original body pick:
+   * sets targetIndex, and, whenever the pick actually hit body geometry (not just empty space or
+   * the region outside the mesh), also records the specific surface point as a body-local unit
+   * direction (converted via the body's spinNode inverse world matrix) so it stays valid as the
+   * body spins/orbits after the fact. */
   private applyPickResult(pick: PickingInfo | null): void {
     if (!pick?.hit || !pick.pickedMesh) return;
+
+    if (pick.pickedMesh === this.solarSystem.belt.rockMesh && pick.thinInstanceIndex !== undefined && pick.thinInstanceIndex >= 0) {
+      const rockIndex = pick.thinInstanceIndex;
+      this.setSelectedEntity({
+        kind: "asteroid",
+        name: `Asteroid #${rockIndex}`,
+        getWorldPosition: () => {
+          this.solarSystem.belt.getRockWorldPosition(rockIndex, tmpEntityPos);
+          return tmpEntityPos;
+        },
+      });
+      return;
+    }
+
+    const ship = this.getEconomyManager().findShipForMesh(pick.pickedMesh);
+    if (ship) {
+      this.setSelectedEntity({ kind: "ship", name: ship.def.name, getWorldPosition: () => ship.root.position });
+      return;
+    }
+
     const index = this.findBodyIndexForMesh(pick.pickedMesh.parent);
     if (index === null) return;
     this.setTarget(index);
@@ -183,6 +222,15 @@ export class SelectionUI {
     // applyPickResult at all) would linger and get used by main.ts's Alt+Space jump-to-spot flow
     // as if it still applied to whatever's newly selected now.
     this.selectedSurfacePoint = null;
+    this.selectedEntity = null;
+  }
+
+  /** Selects a ship/asteroid, clearing any body selection - see selectedEntity's own comment on
+   * why exactly one thing is ever selected at a time. */
+  setSelectedEntity(entity: SelectedEntity): void {
+    this.selectedEntity = entity;
+    this.targetIndex = null;
+    this.selectedSurfacePoint = null;
   }
 
   /** Clears the selection entirely - used when backing out of orbit mode via ESC ("deselect and
@@ -190,17 +238,19 @@ export class SelectionUI {
   clearSelection(): void {
     this.targetIndex = null;
     this.selectedSurfacePoint = null;
+    this.selectedEntity = null;
   }
 
   /** Call once per frame to keep the reticle tracking the current target. */
   update(): void {
-    if (this.isOrbitMode()) {
+    const focusLabel = this.getFocusLabel();
+    if (focusLabel !== null) {
       // The corner-bracket reticle is for picking a travel target from afar (free cam) - once
       // you're actually in orbit around something, it's redundant/distracting. Swap it for a
       // plain always-on top-center label naming whatever you're currently orbiting instead.
       this.reticleEl.hidden = true;
       this.orbitFocusLabelEl.hidden = false;
-      this.orbitFocusLabelEl.textContent = this.solarSystem.focused.def.name;
+      this.orbitFocusLabelEl.textContent = focusLabel;
       return;
     }
     this.orbitFocusLabelEl.hidden = true;

@@ -21,7 +21,7 @@ import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
 import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
 import { StellarDust } from "./environment/stellarDust";
-import { SelectionUI } from "./ui/selection";
+import { SelectionUI, type SelectedEntity } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
 import { EconomyManager } from "./economy/economyManager";
 import { ExamineUI } from "./ui/examineUI";
@@ -69,6 +69,13 @@ function radiusThresholds(bodyRadius: number): RadiusThresholds {
  * into orbit, which read as jarring/involuntary. Committing to orbit around something is now
  * always a deliberate action instead - see enterOrbitFromFreeCam and jumpToRtsAtSpot below. */
 const FREE_CAM_COLLIDER_FACTOR = 1.05;
+
+/** Fixed orbit-radius range for "orbitEntity" mode (orbiting a selected ship/asteroid) - unlike
+ * planets, these don't have a per-body radiusThresholds() scale (ships/asteroids are all tiny
+ * and roughly similar in size, tens of units, not thousands), so one shared range covers them. */
+const ENTITY_ORBIT_MIN_RADIUS = 30;
+const ENTITY_ORBIT_MAX_RADIUS = 400;
+const ENTITY_ORBIT_DEFAULT_RADIUS = 120;
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
@@ -135,7 +142,7 @@ async function main() {
   // below mutates every frame via LerpToRef, never reassigned) - see StellarDust's doc comment.
   const stellarDust = new StellarDust(scene, orbitCamera.camera.position);
 
-  let mode: "orbit" | "ground" = "orbit";
+  let mode: "orbit" | "ground" | "orbitEntity" = "orbit";
   let freeCamActive = false;
   let cursorModeActive = false;
   let escapePressed = false;
@@ -177,15 +184,21 @@ async function main() {
     cursorModeHoldMode = false;
   }
 
-  const selectionUI = new SelectionUI(
+  const selectionUI: SelectionUI = new SelectionUI(
     solarSystem,
     scene,
     engine,
     canvas,
     freeFlyCamera,
     () => freeCamActive,
-    () => mode === "orbit" && !freeCamActive && !transiting,
+    () => {
+      if (freeCamActive || transiting) return null;
+      if (mode === "orbit") return solarSystem.focused.def.name;
+      if (mode === "orbitEntity") return selectionUI.selectedEntity?.name ?? null;
+      return null;
+    },
     () => cursorModeActive,
+    () => economyManager,
   );
   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
   const economyManager = new EconomyManager(scene, solarSystem);
@@ -229,11 +242,20 @@ async function main() {
         selectionUI.selectedSurfacePoint = null;
       } else if (selectionUI.targetIndex !== null) {
         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+      } else if (selectionUI.selectedEntity !== null) {
+        // A selected ship/asteroid has no surface spot to jump to RTS at - Space just does the
+        // same smooth orbit-entry enterOrbit (Shift) would, same as the body case above.
+        enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
       } else {
         selectionUI.selectWithReticle();
       }
     }
-    if (e.code === keybindings.get("enterOrbit") && freeCamActive && !e.repeat && selectionUI.targetIndex !== null) {
+    if (
+      e.code === keybindings.get("enterOrbit") &&
+      freeCamActive &&
+      !e.repeat &&
+      (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null)
+    ) {
       enterOrbitPressed = true;
     }
     if (e.code === keybindings.get("cursorMode") && freeCamActive && !e.repeat) {
@@ -293,13 +315,14 @@ async function main() {
   // normal control", not the cinematic interplanetary beat Tab gets).
   function toggleFreeCam() {
     if (!freeCamActive) {
-      const activeCamera = mode === "orbit" ? orbitCamera.camera : groundCamera.camera;
+      // "orbit" and "orbitEntity" both use orbitCamera - only "ground" uses groundCamera.
+      const activeCamera = mode === "ground" ? groundCamera.camera : orbitCamera.camera;
       const worldPos = activeCamera.globalPosition.clone();
       const worldRot = new Quaternion();
       activeCamera.getWorldMatrix().decompose(undefined, worldRot, undefined);
 
-      if (mode === "orbit") orbitCamera.detach();
-      else groundCamera.detach();
+      if (mode === "ground") groundCamera.detach();
+      else orbitCamera.detach();
 
       freeFlyCamera.setPose(worldPos, worldRot);
       scene.activeCamera = freeFlyCamera.camera;
@@ -320,6 +343,7 @@ async function main() {
       freeCamReticle.hidden = true;
       cursorModeBadge.hidden = true;
 
+      orbitCamera.trackWorldPosition(null);
       orbitCamera.camera.parent = focused.orbit.spinNode;
       orbitCamera.resetView(new Vector3(0, 0.35, 1));
       orbitCamera.setRadius(thresholds.defaultOrbit);
@@ -395,6 +419,7 @@ async function main() {
     freeCamReticle.hidden = true;
     cursorModeBadge.hidden = true;
 
+    orbitCamera.trackWorldPosition(null);
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.resetView(tmpLocalViewDir);
     orbitCamera.setRadius(Math.min(targetThresholds.maxOrbit, Math.max(targetThresholds.minOrbit, dist)));
@@ -416,6 +441,39 @@ async function main() {
       groundCamera.setHeightfield(target.heightfield);
       groundCamera.camera.parent = target.orbit.spinNode;
     }
+  }
+
+  /** Commits to orbit around a selected ship/asteroid from free cam - same trigger (Space/Shift)
+   * and entry-blend feel as enterOrbitFromFreeCam, but the target has no rotating "surface
+   * frame" to parent to (a ship's own orientation changes during flip-and-burn; an asteroid has
+   * no per-instance transform node at all), so this leaves the camera unparented and tracks the
+   * entity's live world position each frame instead (see OrbitTrackballCamera.trackWorldPosition).
+   * Doesn't touch `focused`/`thresholds` - terrain LOD and day/night stay locked to whatever
+   * planet was last focused, since none of that applies to a ship/asteroid. */
+  function enterOrbitEntityFromFreeCam(entity: SelectedEntity): void {
+    const camPos = freeFlyCamera.camera.globalPosition.clone();
+    const camRot = freeFlyCamera.camera.rotationQuaternion!.clone();
+
+    freeFlyCamera.detach();
+    freeCamActive = false;
+    cursorModeActive = false;
+    cancelCursorModeHold();
+    freeCamBadge.hidden = true;
+    freeCamReticle.hidden = true;
+    cursorModeBadge.hidden = true;
+    planeLockBadge.hidden = true; // plane-lock doesn't apply to entity-orbit
+
+    orbitCamera.camera.parent = null;
+    orbitCamera.trackWorldPosition(entity.getWorldPosition);
+    orbitCamera.setRadiusLimits(ENTITY_ORBIT_MIN_RADIUS, ENTITY_ORBIT_MAX_RADIUS);
+    orbitCamera.setRadius(ENTITY_ORBIT_DEFAULT_RADIUS);
+    orbitCamera.resetView(new Vector3(0, 0.35, 1)); // arbitrary reasonable starting angle, same default used elsewhere
+    orbitCamera.enterFromWorldPose(camPos, camRot);
+    orbitCamera.update(0); // seed position/rotation at the blend's t=0 start immediately - see enterOrbitFromFreeCam's own comment
+
+    scene.activeCamera = orbitCamera.camera;
+    orbitCamera.attach();
+    mode = "orbitEntity";
   }
 
   /** The other, faster way to commit from free cam: hold Alt (cursor mode) to click a specific
@@ -449,6 +507,7 @@ async function main() {
     // Defensively reparent/re-range the orbit camera too, even though it stays invisible for
     // this whole jump, so exitToOrbitMode (scrolling/Escape back out of ground mode later) lands
     // somewhere sane instead of still referencing whatever body was focused before this jump.
+    orbitCamera.trackWorldPosition(null);
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.setRadiusLimits(targetThresholds.minOrbit, targetThresholds.maxOrbit);
     orbitCamera.setRadius(targetThresholds.defaultOrbit);
@@ -545,6 +604,7 @@ async function main() {
     Vector3.TransformCoordinatesToRef(Vector3.Up(), tmpInvMatrix, tmpLocalUp);
     tmpLocalUp.normalize();
 
+    orbitCamera.trackWorldPosition(null);
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.setViewDirFromWorldPoint(tmpLocalViewDir);
     orbitCamera.up.copyFrom(tmpLocalUp);
@@ -571,10 +631,10 @@ async function main() {
       resolveFreeCamCollisions();
     } else if (transiting) {
       updateTransit(dt);
-    } else if (mode === "orbit") {
-      orbitCamera.update(dt);
-    } else {
+    } else if (mode === "ground") {
       groundCamera.update(dt, focused.radius);
+    } else {
+      orbitCamera.update(dt); // "orbit" and "orbitEntity" both use orbitCamera
     }
 
     if (transiting) {
@@ -582,13 +642,15 @@ async function main() {
       // but skip terrain LOD work - camera position isn't meaningful in any body's local
       // frame while it's unparented mid-flight.
       solarSystem.update(dt, Vector3.Zero(), sun);
-    } else if (freeCamActive) {
-      // Free cam is unparented (true world space), so the focused body's terrain still needs
-      // its camera position converted into that body's local frame - otherwise LOD freezes at
-      // whatever level it was when free cam was toggled on, making nearby terrain look
-      // permanently low-res no matter how close the camera actually flies.
+    } else if (freeCamActive || mode === "orbitEntity") {
+      // Both free cam and orbitEntity (tracking a moving ship/asteroid) are unparented/world-
+      // space, so the focused body's terrain still needs its camera position converted into
+      // that body's local frame - otherwise LOD freezes at whatever level it was when this mode
+      // started, making nearby terrain look permanently low-res no matter how close the camera
+      // actually gets.
+      const camPos = freeCamActive ? freeFlyCamera.camera.globalPosition : orbitCamera.camera.globalPosition;
       focused.orbit.spinNode.getWorldMatrix().invertToRef(tmpInvMatrix);
-      Vector3.TransformCoordinatesToRef(freeFlyCamera.camera.globalPosition, tmpInvMatrix, tmpFreeCamLocalPos);
+      Vector3.TransformCoordinatesToRef(camPos, tmpInvMatrix, tmpFreeCamLocalPos);
       solarSystem.update(dt, tmpFreeCamLocalPos, sun);
     } else {
       const focusedCameraLocalPosition = mode === "orbit" ? orbitCamera.camera.position : groundCamera.camera.position;
@@ -608,8 +670,12 @@ async function main() {
     if (freeCamTogglePressed) toggleFreeCam();
     freeCamTogglePressed = false;
 
-    if (enterOrbitPressed && freeCamActive && selectionUI.targetIndex !== null) {
-      enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+    if (enterOrbitPressed && freeCamActive) {
+      if (selectionUI.targetIndex !== null) {
+        enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+      } else if (selectionUI.selectedEntity !== null) {
+        enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
+      }
     }
     enterOrbitPressed = false;
 
@@ -618,7 +684,7 @@ async function main() {
     // (never reset) until free cam turned off, at which point it fired late/out of context.
     if (reorientPressed) {
       if (freeCamActive) freeFlyCamera.reorient();
-      else if (mode === "orbit") orbitCamera.reorient();
+      else if (mode !== "ground") orbitCamera.reorient(); // "orbit" and "orbitEntity" both use orbitCamera
     }
     reorientPressed = false;
 
@@ -657,6 +723,15 @@ async function main() {
           ) {
             enterGroundMode();
           }
+        } else if (mode === "orbitEntity") {
+          if (escapePressed || orbitCamera.requestExitToFreeCam) {
+            // Same "back out to free cam" meaning as orbit mode's own ESC/zoom-out-past-max
+            // above - ships/asteroids have no ground mode to narrow into, so this is the only
+            // way out.
+            selectionUI.clearSelection();
+            orbitCamera.trackWorldPosition(null);
+            toggleFreeCam();
+          }
         } else if (groundCamera.requestExitToOrbit || escapePressed) {
           exitToOrbitMode();
         }
@@ -681,8 +756,9 @@ async function main() {
         `FPS: ${engine.getFps().toFixed(0)}\n` +
         `Mode: ${cameraMode}\n` +
         `Focused: ${focused.def.name}\n` +
+        (mode === "orbitEntity" ? `Orbiting: ${selectionUI.selectedEntity?.name ?? "-"}\n` : "") +
         `Dist from focused: ${distanceFromFocused.toFixed(0)}\n` +
-        `Orbit radius: ${mode === "orbit" ? orbitCamera.radius.toFixed(0) : "-"}\n` +
+        `Orbit radius: ${mode !== "ground" ? orbitCamera.radius.toFixed(0) : "-"}\n` +
         `Ground eye height: ${mode === "ground" ? groundCamera.eyeHeight.toFixed(0) : "-"}\n` +
         `Ships: ${economyManager.getExamineInfo().filter((e) => e.kind === "Ship").length}`;
     }

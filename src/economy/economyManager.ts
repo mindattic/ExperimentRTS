@@ -1,4 +1,4 @@
-import type { Scene, Vector3 } from "@babylonjs/core";
+import type { Node, Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
 import { Base } from "./base";
 import { Station } from "./station";
@@ -19,7 +19,9 @@ function findBody(solarSystem: SolarSystem, name: string) {
 export class EconomyManager {
   private readonly bases: Base[] = [];
   private readonly stations: Station[] = [];
-  private readonly ships: Ship[];
+  /** Public (not just private) so SelectionUI/main.ts can look ships up by reference for
+   * selection/orbit-tracking purposes - see findShipForMesh below. */
+  readonly ships: Ship[];
   private readonly stopsById = new Map<string, Dockable>();
 
   /** Bound once (not per-frame) so every Ship.update() call can reuse the same function
@@ -55,6 +57,18 @@ export class EconomyManager {
 
   setShipTrajectoriesVisible(visible: boolean): void {
     for (const ship of this.ships) ship.setTrajectoryVisible(visible);
+  }
+
+  /** Walks up from a picked mesh's parent chain looking for a ship's root - same pattern as
+   * SelectionUI's own findBodyIndexForMesh, generalized for a different entity kind. */
+  findShipForMesh(mesh: Node | null): Ship | null {
+    let current = mesh;
+    while (current) {
+      const ship = this.ships.find((s) => s.root === current);
+      if (ship) return ship;
+      current = current.parent;
+    }
+    return null;
   }
 
   /** @param cameraWorldPosition Used for Ship's cube<->billboard-icon LOD swap - ships are
