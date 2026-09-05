@@ -214,6 +214,20 @@ export class OrbitTrackballCamera {
     return this.targetRadius !== null;
   }
 
+  /** Cancels any drag/inertia in progress without also re-leveling roll (contrast reorient()) -
+   * needed wherever a fresh orbit session starts without going through enterFromWorldPose's own
+   * blend (which already resets these itself) - completeTransit (main.ts) sets the camera up
+   * directly instead of blending, so without this, leftover velocity from whatever this
+   * long-lived camera instance was doing the last time it was actually orbiting something (drag
+   * inertia doesn't decay while free cam/a transit has it detached) immediately started rotating
+   * the view away the moment the new session's update() resumed - "I just double click venus, it
+   * zoomed in plane locked and then just slid out of camera". */
+  resetInertia(): void {
+    this.dragging = false;
+    this.velYaw = 0;
+    this.velPitch = 0;
+  }
+
   /** Cancels any drag/inertia in progress and starts blending roll back to a level horizon at
    * the current view direction (never changes which point on the planet is centered). Roll
    * only ever re-levels via this explicit call - it does not happen automatically on its own

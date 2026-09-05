@@ -777,6 +777,7 @@ async function main() {
     freeCamReticle.hidden = true;
 
     orbitCamera.trackWorldPosition(null);
+    orbitCamera.resetInertia(); // this session doesn't go through enterFromWorldPose's own blend (which resets this itself) - see resetInertia's own comment
     orbitCamera.camera.parent = target.orbit.spinNode;
     orbitCamera.setViewDirFromWorldPoint(tmpLocalViewDir);
     orbitCamera.up.copyFrom(tmpLocalUp);
