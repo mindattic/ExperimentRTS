@@ -64,7 +64,10 @@ const DEFAULTS: Record<Action, string> = {
   travel: "Space",
   exitGround: "Escape",
   toggleLabels: "KeyL",
-  cursorMode: "AltLeft",
+  // Was AltLeft - bare Alt is browser/OS-reserved (e.g. focuses the browser's own menu bar in
+  // several browsers) and could steal focus/keyboard input from the page, so this needed a key
+  // the browser doesn't intercept.
+  cursorMode: "KeyZ",
   // Shares the physical Shift key with FreeFlyCamera's hardcoded run-speed boost (not itself in
   // this rebindable registry) - safe because this fires once on the keydown edge (only when a
   // target is already selected), while the run boost is a separate, continuous "is it currently

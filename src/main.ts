@@ -37,6 +37,13 @@ const cursorModeBadge = document.getElementById("cursorModeBadge") as HTMLElemen
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 const devStats = document.getElementById("devStats") as HTMLElement;
 
+/** Simplification per explicit request ("controls are getting out of hand ... just free cam, no
+ * orbit or anything, toggle the logic off for anything else for now") - the app boots straight
+ * into free cam and stays there: orbit/ground/orbitEntity modes, interplanetary transit, and the
+ * F-key toggle back out of free cam are all disabled while this is true. None of that logic is
+ * removed, just gated behind this one flag - flip it back to false to restore it all. */
+const FREE_CAM_ONLY = true;
+
 /** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
 const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
 /** Stylized transit duration - not physically timed against distance, just a consistent "warp" feel. */
@@ -222,12 +229,12 @@ async function main() {
       travelPressed = true;
     }
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
-    if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
+    if (e.code === keybindings.get("freeCam") && !FREE_CAM_ONLY) freeCamTogglePressed = true;
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
       e.preventDefault();
       // Space is the single, universal "commit" key in free cam once something's selected:
-      // - a specific surface spot pending (hold Alt/cursor mode, click a landable body - see
+      // - a specific surface spot pending (hold the cursorMode key, click a landable body - see
       //   SelectionUI.applyPickResult) flies straight into RTS ground view anchored right there,
       //   skipping orbit mode entirely;
       // - otherwise, a selected body (focus list, or a plain click/reticle-pick) smoothly enters
@@ -236,14 +243,16 @@ async function main() {
       // - with nothing selected yet, this is the original keyboard alternative to left-click for
       //   the free-cam reticle - clicking under Pointer Lock works too, but a dedicated key is
       //   easier to hit without disturbing mouselook.
+      // All three "commit" branches are disabled while FREE_CAM_ONLY is on - only plain
+      // selection (the final else) still works, so Space just always acts like the reticle key.
       const spot = selectionUI.selectedSurfacePoint;
       const spotBody = spot ? solarSystem.bodies[spot.bodyIndex] : null;
-      if (spot && spotBody?.landable) {
+      if (!FREE_CAM_ONLY && spot && spotBody?.landable) {
         jumpToRtsAtSpot(spotBody, spot.localDir);
         selectionUI.selectedSurfacePoint = null;
-      } else if (selectionUI.targetIndex !== null) {
+      } else if (!FREE_CAM_ONLY && selectionUI.targetIndex !== null) {
         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
-      } else if (selectionUI.selectedEntity !== null) {
+      } else if (!FREE_CAM_ONLY && selectionUI.selectedEntity !== null) {
         // A selected ship/asteroid has no surface spot to jump to RTS at - Space just does the
         // same smooth orbit-entry enterOrbit (Shift) would, same as the body case above.
         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
@@ -252,6 +261,7 @@ async function main() {
       }
     }
     if (
+      !FREE_CAM_ONLY &&
       e.code === keybindings.get("enterOrbit") &&
       freeCamActive &&
       !e.repeat &&
@@ -488,7 +498,7 @@ async function main() {
     mode = "orbitEntity";
   }
 
-  /** The other, faster way to commit from free cam: hold Alt (cursor mode) to click a specific
+  /** The other, faster way to commit from free cam: hold the cursorMode key to click a specific
    * surface spot, then press Space to fly straight into RTS ground view anchored right there,
    * skipping orbit mode entirely. RtsGroundCamera's own entry blend is distance-scaled (see its
    * ENTRY_BLEND_MIN/MAX_SECONDS), so this reads as a continuous flight even from far away. */
@@ -646,6 +656,12 @@ async function main() {
     stellarDust.stop();
   }
 
+  // Boots straight into free cam under FREE_CAM_ONLY, reusing toggleFreeCam's own "on" branch
+  // (which captures whichever camera is currently active's pose) rather than duplicating that
+  // logic - orbitCamera is already attached with its normal default pose at this point, so this
+  // just carries that straight over into free cam's starting position.
+  if (FREE_CAM_ONLY) toggleFreeCam();
+
   engine.runRenderLoop(() => {
     const dt = engine.getDeltaTime() / 1000;
 
@@ -795,7 +811,6 @@ async function main() {
     // pattern as nightBrightness above, rather than tracking a "did this setting just change"
     // flag - setEnabled() with the same value it already has is a no-op either way.
     solarSystem.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
-    economyManager.setOrbitLinesVisible(graphicsSettings.showOrbitLines);
     economyManager.setShipTrajectoriesVisible(graphicsSettings.showShipTrajectories);
 
     scene.render();

@@ -1,6 +1,4 @@
-import { Color3, type LinesMesh, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
-import { mulberry32 } from "../terrain/prng";
-import { hashSeed } from "./hullTexture";
+import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import { CelestialOrbit } from "../solarSystem/celestialOrbit";
 import { spinPeriodSeconds } from "../solarSystem/scale";
@@ -43,8 +41,11 @@ const STATION_SPIN_SECONDS = 90;
  * duplicating any of that in a bespoke "simple circular orbit" class.
  *
  * Ships routing through a station "pass through the ring" as a visual/flight-path detail only -
- * not a mandatory chokepoint - so no special approach-vector alignment is attempted here; the
- * torus just sits in its default orientation (hole facing local Y).
+ * not a mandatory chokepoint. The torus is rotated 90 degrees off CreateTorus's default (hole
+ * along local Y) so the hole instead faces horizontally - a ring leading to and from the planet,
+ * not lying flat like a table. No orbit line: unlike a moon or planet, a geosynchronous station
+ * doesn't have a meaningfully different position to trace - it's always over the same point on
+ * the surface, so a drawn ellipse would just be visual clutter with nothing distinct to show.
  */
 export class Station implements Dockable {
   readonly id: string;
@@ -52,7 +53,6 @@ export class Station implements Dockable {
   readonly orbit: CelestialOrbit;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
-  readonly orbitLineMesh: LinesMesh;
 
   constructor(scene: Scene, def: StationDef, parentBody: CelestialBody) {
     this.id = def.id;
@@ -74,15 +74,15 @@ export class Station implements Dockable {
     // composition carries this station's small local ellipse along with wherever the planet
     // currently is, for free.
     this.orbit.orbitNode.parent = parentBody.orbit.orbitNode;
-    // Same deterministic per-entity hue idea as SolarSystem's own orbit lines, just keyed off
-    // the station's id hash instead of a numeric seed.
-    const hue = mulberry32(hashSeed(def.id))() * 360;
-    this.orbitLineMesh = this.orbit.createOrbitLine(scene, `${def.id}OrbitLine`, Color3.FromHSV(hue, 0.55, 0.95), parentBody.orbit.orbitNode);
 
     const outerRadius = Math.max(20, parentBody.radius * 0.05);
     this.mesh = MeshBuilder.CreateTorus(`${def.id}Mesh`, { diameter: outerRadius * 2, thickness: outerRadius * 0.28, tessellation: 24 }, scene);
     this.mesh.material = createStationMaterial(scene, def);
     this.mesh.parent = this.orbit.spinNode;
+    // CreateTorus's default orientation lies the ring flat (hole along local Y) - rotated 90
+    // degrees around Z so the hole instead faces horizontally, reading as a ring leading to and
+    // from the planet rather than a flat table sitting in orbit.
+    this.mesh.rotation.z = Math.PI / 2;
   }
 
   /** Composes the parent planet's future position with this station's own future position in
