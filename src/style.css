@@ -243,11 +243,15 @@ body {
 }
 
 .free-cam-badge {
+  /* z-index 16 here and on every other persistent badge/label/panel below (plane-lock,
+     orbital-scale, orbit-focus, dev-stats, focus-list) - one above body-icons-layer/
+     offscreen-indicator-layer's own 15, so a per-frame HUD marker positioned near a screen
+     edge never renders on top of and collides with this permanent UI chrome. */
   position: fixed;
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
+  z-index: 16;
   padding: 6px 14px;
   font-family: system-ui, sans-serif;
   font-size: 13px;
@@ -268,7 +272,7 @@ body {
   bottom: 52px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
+  z-index: 16;
   padding: 6px 14px;
   font-family: system-ui, sans-serif;
   font-size: 13px;
@@ -289,7 +293,7 @@ body {
   bottom: 88px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
+  z-index: 16;
   padding: 6px 14px;
   font-family: system-ui, sans-serif;
   font-size: 13px;
@@ -310,7 +314,7 @@ body {
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
+  z-index: 16;
   padding: 6px 16px;
   font-family: system-ui, sans-serif;
   font-size: 15px;
@@ -331,7 +335,7 @@ body {
   position: fixed;
   bottom: 16px;
   left: 16px;
-  z-index: 10;
+  z-index: 16;
   padding: 8px 10px;
   font-family: ui-monospace, monospace;
   font-size: 12px;
@@ -391,7 +395,7 @@ body {
   position: fixed;
   top: 16px;
   left: 16px;
-  z-index: 10;
+  z-index: 16;
   min-width: 160px;
   padding: 10px 14px;
   font-family: system-ui, sans-serif;
