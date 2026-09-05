@@ -9,8 +9,13 @@ import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial } fr
  * sphere - reads as a bright light source itself, not a lit geometric object.
  */
 export class Star {
+  private readonly mesh: Mesh;
+  private readonly baseRadius: number;
+
   constructor(scene: Scene, radius: number) {
+    this.baseRadius = radius;
     const mesh = MeshBuilder.CreatePlane("star", { size: radius * 3.5 }, scene);
+    this.mesh = mesh;
     mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
     mesh.isPickable = false;
 
@@ -35,5 +40,12 @@ export class Star {
     material.disableLighting = true;
     material.backFaceCulling = false;
     mesh.material = material;
+  }
+
+  /** Rescales the glow billboard to a new radius (relative to the one passed to the
+   * constructor) - see orbitalScale.ts/SolarSystem.update, which blends this between
+   * STAR_RADIUS and STAR_RADIUS_ACTUAL every frame the same way body distances blend. */
+  setRadius(radius: number): void {
+    this.mesh.scaling.setAll(radius / this.baseRadius);
   }
 }

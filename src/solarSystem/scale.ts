@@ -14,6 +14,16 @@ export const EARTH_RADIUS = 2000;
  * orbit, not a wall filling the screen, at this compressed distance scale. */
 export const STAR_RADIUS = 350;
 
+/** The "Actual scale" counterpart to STAR_RADIUS - the sun's true radius (695,700 km) expressed
+ * on the SAME linear km-per-unit anchor actualSceneDistance() already uses for distance (1 AU =
+ * EARTH_DISTANCE units), so it's genuinely to-scale relative to the real planetary distances
+ * Actual mode moves everything else to - not just "bigger," but the actual real-world ratio.
+ * Real interplanetary distances dwarf even the sun's own size (695,700 km is only ~0.0047 AU),
+ * so this comes out SMALLER than the gameplay placeholder above (~130 vs 350 units) - a genuinely
+ * to-scale solar system famously makes everything read as a tiny dot at real distances, the sun
+ * included; this isn't a compromise, it's what "true size" actually looks like at this anchor. */
+export const STAR_RADIUS_ACTUAL = EARTH_DISTANCE * (695700 / 149597870.7);
+
 /**
  * Compresses a real AU distance into scene units. Exponent < 1 keeps far bodies reachable.
  * Tuned (with the eccentricity table below) so no two neighboring orbits' radial bands -

@@ -465,11 +465,11 @@ async function main() {
     scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
-    // Google Earth-style by default in focus mode: up stays locked to the body's own polar axis
-    // (planeAxis, interpreted in spinNode's local frame - see setPlaneLocked's own comment), so
-    // dragging is pure yaw/pitch with no accumulating roll/tumble - still toggleable with the
-    // lockPlane key (P) if free-tumble is wanted instead.
-    orbitCamera.setPlaneLocked(true);
+    // Free trackball by default ("WASD and mouse swipe both don't allow free rotation around
+    // focused planet/moon/ship" - the previous Google-Earth-style plane-locked default only
+    // allows yaw/pitch, no roll/tumble) - still toggleable with the lockPlane key (P) for anyone
+    // who wants the constrained style instead.
+    orbitCamera.setPlaneLocked(false);
     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
 
     if (target.landable && target.heightfield) {
@@ -494,6 +494,7 @@ async function main() {
     freeCamBadge.hidden = true;
     freeCamReticle.hidden = true;
     planeLockBadge.hidden = true; // plane-lock doesn't apply to entity-orbit
+    orbitCamera.setPlaneLocked(false); // defensive - don't inherit a stale true from a prior planet-orbit session
 
     orbitCamera.camera.parent = null;
     orbitCamera.trackWorldPosition(entity.getWorldPosition);
@@ -831,8 +832,8 @@ async function main() {
     scene.activeCamera = orbitCamera.camera;
     orbitCamera.attach();
     mode = "orbit";
-    // Google Earth-style by default in focus mode - see enterOrbitFromFreeCam's own comment.
-    orbitCamera.setPlaneLocked(true);
+    // Free trackball by default - see enterOrbitFromFreeCam's own comment.
+    orbitCamera.setPlaneLocked(false);
     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
     transiting = false;
     stellarDust.stop();

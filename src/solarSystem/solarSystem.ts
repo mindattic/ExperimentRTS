@@ -4,7 +4,7 @@ import { Star } from "../environment/star";
 import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
-import { BODY_DEFS, COLOR_MAP_SOURCES, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
+import { BODY_DEFS, COLOR_MAP_SOURCES, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS, STAR_RADIUS_ACTUAL } from "./scale";
 import { orbitalScale } from "./orbitalScale";
 import { mulberry32 } from "../terrain/prng";
 import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
@@ -36,6 +36,13 @@ export class SolarSystem {
    * SolarSystem.update can keep it visually attached to its body by applying a uniform
    * mesh.scaling = currentSMA/gameplaySMA every frame instead of regenerating geometry. */
   private readonly orbitLines: { mesh: LinesMesh; gameplaySemiMajorAxis: number; getCurrentSemiMajorAxis: () => number }[] = [];
+  /** Belt inner/outer are re-derived every frame from Mars/Jupiter's own LIVE (possibly
+   * orbitalScale-blended) semi-major axis - same 1.3x/0.8x factors used to compute them once at
+   * construction below, just re-evaluated continuously so the belt stretches/compresses along
+   * with Mars and Jupiter instead of staying frozen at gameplay scale (see AsteroidBelt.setRadii's
+   * own comment for why a uniform mesh-scale trick isn't used here, unlike orbit lines). */
+  private readonly beltMars: CelestialBody;
+  private readonly beltJupiter: CelestialBody;
 
   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
    * as close to "fixed at infinity" as the clipping range allows.
@@ -123,10 +130,10 @@ export class SolarSystem {
       this.bodies.push(moon);
     }
 
-    const marsIndex = BODY_DEFS.findIndex((b) => b.name === "Mars");
-    const jupiterIndex = BODY_DEFS.findIndex((b) => b.name === "Jupiter");
-    const beltInner = sceneDistance(BODY_DEFS[marsIndex].auDistance) * 1.3;
-    const beltOuter = sceneDistance(BODY_DEFS[jupiterIndex].auDistance) * 0.8;
+    this.beltMars = this.bodies.find((b) => b.def.name === "Mars")!;
+    this.beltJupiter = this.bodies.find((b) => b.def.name === "Jupiter")!;
+    const beltInner = this.beltMars.gameplaySemiMajorAxis * 1.3;
+    const beltOuter = this.beltJupiter.gameplaySemiMajorAxis * 0.8;
     this.belt = new AsteroidBelt(scene, beltInner, beltOuter, 909);
 
     this.focusedIndex = BODY_DEFS.findIndex((b) => b.name === "Earth");
@@ -176,7 +183,11 @@ export class SolarSystem {
     for (const line of this.orbitLines) {
       line.mesh.scaling.setAll(line.getCurrentSemiMajorAxis() / line.gameplaySemiMajorAxis);
     }
+    this.belt.setRadii(this.beltMars.orbit.semiMajorAxis * 1.3, this.beltJupiter.orbit.semiMajorAxis * 0.8);
     this.belt.update(deltaSeconds);
+    // Blends the same way every body's own distance does - see STAR_RADIUS_ACTUAL's own comment
+    // on why this genuinely shrinks (not grows) at full Actual scale.
+    this.star.setRadius(STAR_RADIUS + (STAR_RADIUS_ACTUAL - STAR_RADIUS) * blend);
 
     this.focused.terrain?.update(focusedCameraLocalPosition);
 
