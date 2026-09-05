@@ -185,6 +185,11 @@ export function createHullMaterial(scene: Scene, faction: FactionId, seed: numbe
   const material = new StandardMaterial(`hullMaterial_${cacheKey}`, scene);
   material.specularColor = Color3.Black();
   material.backFaceCulling = true;
+  // Every planet/terrain material at this scene's huge near/far ratio uses useLogarithmicDepth
+  // (see celestialBody.ts/planetTerrain.ts) - without it here too, a ship's linear depth values
+  // don't compare consistently against a planet's logarithmic ones, so a ship right in front of
+  // the camera could draw as if behind a planet a full AU away ("ship draw order isn't right").
+  material.useLogarithmicDepth = true;
 
   if (atlasUrl) {
     material.diffuseTexture = new Texture(atlasUrl, scene);
@@ -238,6 +243,7 @@ export function createShipIconMaterial(scene: Scene, faction: FactionId): Standa
   material.emissiveColor = Color3.White();
   material.disableLighting = true;
   material.backFaceCulling = false;
+  material.useLogarithmicDepth = true; // see createHullMaterial's own comment
   iconMaterialCache.set(faction, material);
   return material;
 }

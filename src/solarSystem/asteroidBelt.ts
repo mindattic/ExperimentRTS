@@ -26,6 +26,9 @@ export class AsteroidBelt {
     const material = new StandardMaterial("asteroidMaterial", scene);
     material.diffuseColor = new Color3(0.35, 0.32, 0.28);
     material.specularColor = Color3.Black();
+    // See hullTexture.ts's createHullMaterial for why - same "small object near camera vs a
+    // planet a full AU away" depth-comparison mismatch applies to asteroids too.
+    material.useLogarithmicDepth = true;
     this.rock.material = material;
     this.rock.parent = this.node;
     this.rock.isPickable = true; // individually selectable via PickingInfo.thinInstanceIndex
