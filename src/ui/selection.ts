@@ -59,9 +59,15 @@ export class SelectionUI {
   private readonly isCursorModeActive: () => boolean;
   private readonly getEconomyManager: () => EconomyManager;
   private readonly isInputLocked: () => boolean;
+  private readonly canvas: HTMLCanvasElement;
   private listOpen = false;
   private pointerDownX = 0;
   private pointerDownY = 0;
+  /** Tracked ourselves via a real pointermove listener, rather than trusting Babylon's own
+   * scene.pointerX/pointerY - see the constructor's own comment on why. */
+  private lastClientX = 0;
+  private lastClientY = 0;
+  private hasPointerPosition = false;
 
   constructor(
     solarSystem: SolarSystem,
@@ -84,6 +90,7 @@ export class SelectionUI {
     this.isCursorModeActive = isCursorModeActive;
     this.getEconomyManager = getEconomyManager;
     this.isInputLocked = isInputLocked;
+    this.canvas = canvas;
     this.focusListEl = document.getElementById("focusList")!;
     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
     this.reticleEl = document.getElementById("reticle")!;
@@ -95,6 +102,23 @@ export class SelectionUI {
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
     canvas.addEventListener("pointerdown", (e) => this.onPointerDown(e));
     canvas.addEventListener("pointerup", (e) => this.onPointerUp(e));
+    // scene.pointerX/pointerY is only as fresh as Babylon's own last-observed pointermove, which
+    // can be stale (or never yet set) - e.g. a click that lands before the mouse has moved at
+    // all since page load picked at the wrong position entirely ("selection doesn't even work
+    // anymore ... or it does work but I have to move first?"). Tracking real clientX/Y ourselves
+    // and converting to canvas-local coordinates on demand (clientToCanvasXY) is reliable from
+    // the very first event, and also fixes the hover label flickering on/off every frame at a
+    // stationary cursor (same staleness, sampled inconsistently frame to frame).
+    window.addEventListener("pointermove", (e) => {
+      this.lastClientX = e.clientX;
+      this.lastClientY = e.clientY;
+      this.hasPointerPosition = true;
+    });
+  }
+
+  private clientToCanvasXY(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
   }
 
   private populateList(): void {
@@ -159,7 +183,8 @@ export class SelectionUI {
     const dy = e.clientY - this.pointerDownY;
     if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD_PX) return; // was a drag, not a click
 
-    const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+    const { x, y } = this.clientToCanvasXY(e.clientX, e.clientY);
+    const pick = this.scene.pick(x, y);
     this.applyPickResult(pick);
   }
 
@@ -179,10 +204,15 @@ export class SelectionUI {
    * used by main.ts's double-click-to-zoom flow to confirm the second click actually landed on
    * a body before committing to fly there. */
   pickBodyIndexUnderCursor(): number | null {
-    const pick =
-      this.isFreeCamActive() && !this.isCursorModeActive()
-        ? this.scene.pickWithRay(this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE))
-        : this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+    let pick: PickingInfo | null;
+    if (this.isFreeCamActive() && !this.isCursorModeActive()) {
+      pick = this.scene.pickWithRay(this.freeFlyCamera.camera.getForwardRay(FREE_CAM_PICK_DISTANCE));
+    } else if (this.hasPointerPosition) {
+      const { x, y } = this.clientToCanvasXY(this.lastClientX, this.lastClientY);
+      pick = this.scene.pick(x, y);
+    } else {
+      return null;
+    }
     if (!pick?.hit || !pick.pickedMesh) return null;
     return this.findBodyIndexForMesh(pick.pickedMesh.parent);
   }
@@ -246,19 +276,20 @@ export class SelectionUI {
    * crosshair reticle already names its locked target via the reticle label instead), and while
    * an automated camera flight has all input locked there's nothing meaningful to hover either. */
   updateHoverLabel(): void {
-    if ((this.isFreeCamActive() && !this.isCursorModeActive()) || this.isInputLocked()) {
+    if ((this.isFreeCamActive() && !this.isCursorModeActive()) || this.isInputLocked() || !this.hasPointerPosition) {
       this.hoverLabelEl.hidden = true;
       return;
     }
-    const name = this.resolveNameForPick(this.scene.pick(this.scene.pointerX, this.scene.pointerY));
+    const { x, y } = this.clientToCanvasXY(this.lastClientX, this.lastClientY);
+    const name = this.resolveNameForPick(this.scene.pick(x, y));
     if (name === null) {
       this.hoverLabelEl.hidden = true;
       return;
     }
     this.hoverLabelEl.hidden = false;
     this.hoverLabelEl.textContent = name;
-    this.hoverLabelEl.style.left = `${this.scene.pointerX}px`;
-    this.hoverLabelEl.style.top = `${this.scene.pointerY}px`;
+    this.hoverLabelEl.style.left = `${this.lastClientX}px`;
+    this.hoverLabelEl.style.top = `${this.lastClientY}px`;
   }
 
   private findBodyIndexForMesh(node: Node | null): number | null {
