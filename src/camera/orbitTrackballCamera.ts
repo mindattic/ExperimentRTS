@@ -32,6 +32,13 @@ const ENTRY_BLEND_SPEED = 3000;
  * away from degenerating to zero. */
 const POLE_CLAMP_DEGREES = 2;
 const MAX_POLE_COS = Math.cos((POLE_CLAMP_DEGREES * Math.PI) / 180);
+/** Radians per pixel of raw (Pointer Lock) mouse movement while right-mouse look-around is
+ * held - same value as FreeFlyCamera's own LOOK_SENSITIVITY, for a consistent look-feel between
+ * the two cameras' mouselook. */
+const LOOK_SENSITIVITY = 0.0025;
+/** How long releasing right-mouse look-around takes to slerp back to the normal
+ * looking-at-the-focused-body orientation. */
+const LOOK_RETURN_SECONDS = 0.4;
 
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
@@ -101,14 +108,31 @@ export class OrbitTrackballCamera {
    * jittered around it - see solarSystem.ts). */
   private readonly planeAxis = Vector3.Up();
 
+  /** True while the right mouse button is held - "looking around from the orbit position"
+   * (see onMouseMove) instead of the normal always-facing-the-body view. Position keeps coming
+   * from viewDir/radius as usual (unaffected - held fixed, since input that would normally
+   * change viewDir is suppressed while this is true - see update()'s own top-level gate);
+   * only the camera's rotation is overridden, from lookAroundRot instead of the computed
+   * look-at-center orientation. */
+  private freeLooking = false;
+  private readonly lookAroundRot = new Quaternion();
+  /** Set the instant right-mouse is released, holding wherever lookAroundRot was at that
+   * moment - update() slerps camera.rotationQuaternion from here back to the normal
+   * look-at-center orientation over LOOK_RETURN_SECONDS, then clears this. */
+  private returnBlendStartRot: Quaternion | null = null;
+  private returnBlendElapsed = 0;
+
   private readonly keys = new Set<string>();
   private readonly canvas: HTMLCanvasElement;
   private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
   private pointerMoveHandler = (e: PointerEvent) => this.onPointerMove(e);
-  private pointerUpHandler = () => this.onPointerUp();
+  private pointerUpHandler = (e: PointerEvent) => this.onPointerUp(e);
   private wheelHandler = (e: WheelEvent) => this.onWheel(e);
   private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
+  private mouseMoveHandler = (e: MouseEvent) => this.onMouseMove(e);
+  private contextMenuHandler = (e: MouseEvent) => e.preventDefault();
+  private pointerLockChangeHandler = () => this.onPointerLockChange();
 
   constructor(scene: Scene, canvas: HTMLCanvasElement, radius: number, minRadius: number, maxRadius: number, farClip: number) {
     this.canvas = canvas;
@@ -133,10 +157,15 @@ export class OrbitTrackballCamera {
     this.canvas.addEventListener("wheel", this.wheelHandler, { passive: true });
     window.addEventListener("keydown", this.keydownHandler);
     window.addEventListener("keyup", this.keyupHandler);
+    window.addEventListener("mousemove", this.mouseMoveHandler);
+    this.canvas.addEventListener("contextmenu", this.contextMenuHandler);
+    document.addEventListener("pointerlockchange", this.pointerLockChangeHandler);
   }
 
   detach(): void {
     this.dragging = false;
+    this.freeLooking = false;
+    this.returnBlendStartRot = null;
     this.keys.clear();
     this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
     window.removeEventListener("pointermove", this.pointerMoveHandler);
@@ -144,6 +173,42 @@ export class OrbitTrackballCamera {
     this.canvas.removeEventListener("wheel", this.wheelHandler);
     window.removeEventListener("keydown", this.keydownHandler);
     window.removeEventListener("keyup", this.keyupHandler);
+    window.removeEventListener("mousemove", this.mouseMoveHandler);
+    this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
+    document.removeEventListener("pointerlockchange", this.pointerLockChangeHandler);
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+  }
+
+  /** Requesting Pointer Lock directly from the right-mouse-button pointerdown handler counts as
+   * the user gesture the API requires, and just works - same retry-on-rejection pattern as
+   * FreeFlyCamera's own requestPointerLockWithRetry. */
+  private requestPointerLockWithRetry(): void {
+    const result = this.canvas.requestPointerLock() as unknown;
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch(() => {
+        const retryOnce = () => {
+          this.canvas.removeEventListener("pointerdown", retryOnce);
+          if (this.freeLooking && document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock();
+        };
+        this.canvas.addEventListener("pointerdown", retryOnce);
+      });
+    }
+  }
+
+  /** The browser force-exits Pointer Lock on its own in some cases (e.g. the user pressing
+   * Escape) regardless of anything this class does - without this, freeLooking could get stuck
+   * true after the OS already released the lock out from under it. */
+  private onPointerLockChange(): void {
+    if (document.pointerLockElement !== this.canvas && this.freeLooking) this.stopFreeLook();
+  }
+
+  /** Ends look-around (whether from mouse-up or a forced Pointer Lock exit) - captures wherever
+   * lookAroundRot currently is as the start of the slerp-back-to-normal blend in update(). */
+  private stopFreeLook(): void {
+    this.freeLooking = false;
+    this.returnBlendStartRot = this.lookAroundRot.clone();
+    this.returnBlendElapsed = 0;
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 
   /** Points the camera at `worldPoint` (nearest direction on the sphere), used when handing off from ground mode. */
@@ -273,6 +338,13 @@ export class OrbitTrackballCamera {
   }
 
   private onPointerDown(e: PointerEvent): void {
+    if (e.button === 2) {
+      this.freeLooking = true;
+      this.returnBlendStartRot = null; // a fresh look-around always wins over an in-progress return blend
+      this.lookAroundRot.copyFrom(this.camera.rotationQuaternion!);
+      if (document.pointerLockElement !== this.canvas) this.requestPointerLockWithRetry();
+      return;
+    }
     if (e.button !== 0) return;
     this.dragging = true;
     this.reorienting = false;
@@ -283,8 +355,23 @@ export class OrbitTrackballCamera {
     this.velPitch = 0;
   }
 
+  private onMouseMove(e: MouseEvent): void {
+    if (!this.freeLooking || document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. Escape)
+    const yaw = e.movementX * LOOK_SENSITIVITY;
+    const pitch = e.movementY * LOOK_SENSITIVITY;
+    // Yaw around world up, pitch around the camera's own current right - identical mouselook
+    // math to FreeFlyCamera.onMouseMove, composed directly onto lookAroundRot (this is object-
+    // space orientation, not a view matrix, same reasoning as that method's own comment).
+    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, tmpQuat);
+    this.lookAroundRot.multiplyInPlace(tmpQuat);
+    Matrix.FromQuaternionToRef(this.lookAroundRot, tmpMatrix);
+    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
+    Quaternion.RotationAxisToRef(tmpRight, pitch, tmpQuat);
+    tmpQuat.multiplyToRef(this.lookAroundRot, this.lookAroundRot);
+  }
+
   private onPointerMove(e: PointerEvent): void {
-    if (!this.dragging) return;
+    if (this.freeLooking || !this.dragging) return;
     const now = performance.now();
     const dtSeconds = Math.max(0.001, (now - this.lastMoveTime) / 1000);
     const dx = e.clientX - this.lastX;
@@ -302,7 +389,11 @@ export class OrbitTrackballCamera {
     this.velPitch = pitchAngle / dtSeconds;
   }
 
-  private onPointerUp(): void {
+  private onPointerUp(e: PointerEvent): void {
+    if (e.button === 2) {
+      if (this.freeLooking) this.stopFreeLook();
+      return;
+    }
     this.dragging = false;
   }
 
@@ -379,110 +470,118 @@ export class OrbitTrackballCamera {
   }
 
   update(deltaSeconds: number): void {
-    let keyYaw = 0;
-    let keyPitch = 0;
-    let keyRoll = 0;
-    if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
-    if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
-    if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
-    if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
-    if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
-    if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
-    if (keyYaw !== 0 || keyPitch !== 0) {
-      this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
-      this.reorienting = false;
-    }
-    if (keyRoll !== 0) {
-      // Tumbles `up` around the current view axis - unlike yaw/pitch (rotateStep), this never
-      // touches viewDir itself, so it doesn't change which point on the planet is centered in
-      // view, only the camera's own tilt.
-      Quaternion.RotationAxisToRef(this.viewDir, keyRoll * KEY_ROTATE_SPEED * deltaSeconds, tmpQuat);
-      Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
-      Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
-      this.up.normalize();
-      this.reorienting = false;
-    }
-
-    if (!this.dragging) {
-      const speed = Math.hypot(this.velYaw, this.velPitch);
-      if (speed > MIN_SETTLE_VELOCITY) {
-        this.rotateStep(this.velYaw * deltaSeconds, this.velPitch * deltaSeconds);
-        const decay = Math.exp(-INERTIA_DECAY_PER_SEC * deltaSeconds);
-        this.velYaw *= decay;
-        this.velPitch *= decay;
-      } else {
-        this.velYaw = 0;
-        this.velPitch = 0;
+    // Everything below that would normally change viewDir/up (WASD, drag inertia, reorient,
+    // ambient auto-relevel, plane-lock's forced-up) is suppressed while right-mouse look-around
+    // is active - "looking around from the orbit position" means viewDir/radius (and so the
+    // camera's POSITION) stay exactly where they were the moment right-mouse went down; only
+    // rotation changes, driven by lookAroundRot instead (see onMouseMove) - restored at the very
+    // end of this method once look-around ends (see the position/rotation assignment below).
+    if (!this.freeLooking) {
+      let keyYaw = 0;
+      let keyPitch = 0;
+      let keyRoll = 0;
+      if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
+      if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
+      if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
+      if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
+      if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
+      if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
+      if (keyYaw !== 0 || keyPitch !== 0) {
+        this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
+        this.reorienting = false;
       }
-    }
+      if (keyRoll !== 0) {
+        // Tumbles `up` around the current view axis - unlike yaw/pitch (rotateStep), this never
+        // touches viewDir itself, so it doesn't change which point on the planet is centered in
+        // view, only the camera's own tilt.
+        Quaternion.RotationAxisToRef(this.viewDir, keyRoll * KEY_ROTATE_SPEED * deltaSeconds, tmpQuat);
+        Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
+        Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
+        this.up.normalize();
+        this.reorienting = false;
+      }
 
-    if (this.reorienting && !this.dragging) {
-      if (this.planeLocked) {
-        // up is already forced level every frame below regardless (see the unconditional
-        // planeLocked block) - see reorient()'s own doc comment for why this mode instead
-        // blends PITCH back toward the equator (viewDir perpendicular to planeAxis).
-        const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
-        tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
-        if (Math.abs(cosFromPole) > 1e-4 && tmpPerp.lengthSquared() > 1e-9) {
-          tmpPerp.normalize();
-          const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
-          const nextCos = cosFromPole * (1 - blend);
-          const nextSin = Math.sqrt(Math.max(0, 1 - nextCos * nextCos));
-          this.viewDir.copyFrom(this.planeAxis).scaleInPlace(nextCos).addInPlace(tmpPerp.scale(nextSin));
-          this.viewDir.normalize();
-          if (Math.abs(nextCos) < 1e-4) this.reorienting = false;
+      if (!this.dragging) {
+        const speed = Math.hypot(this.velYaw, this.velPitch);
+        if (speed > MIN_SETTLE_VELOCITY) {
+          this.rotateStep(this.velYaw * deltaSeconds, this.velPitch * deltaSeconds);
+          const decay = Math.exp(-INERTIA_DECAY_PER_SEC * deltaSeconds);
+          this.velYaw *= decay;
+          this.velPitch *= decay;
         } else {
-          this.reorienting = false;
+          this.velYaw = 0;
+          this.velPitch = 0;
         }
-      } else {
-        // Blend `up` toward the natural horizon-aligned up at the current viewDir - never
-        // changes which point on the planet is centered (see reorient()'s own doc comment).
+      }
+
+      if (this.reorienting && !this.dragging) {
+        if (this.planeLocked) {
+          // up is already forced level every frame below regardless (see the unconditional
+          // planeLocked block) - see reorient()'s own doc comment for why this mode instead
+          // blends PITCH back toward the equator (viewDir perpendicular to planeAxis).
+          const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
+          tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
+          if (Math.abs(cosFromPole) > 1e-4 && tmpPerp.lengthSquared() > 1e-9) {
+            tmpPerp.normalize();
+            const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
+            const nextCos = cosFromPole * (1 - blend);
+            const nextSin = Math.sqrt(Math.max(0, 1 - nextCos * nextCos));
+            this.viewDir.copyFrom(this.planeAxis).scaleInPlace(nextCos).addInPlace(tmpPerp.scale(nextSin));
+            this.viewDir.normalize();
+            if (Math.abs(nextCos) < 1e-4) this.reorienting = false;
+          } else {
+            this.reorienting = false;
+          }
+        } else {
+          // Blend `up` toward the natural horizon-aligned up at the current viewDir - never
+          // changes which point on the planet is centered (see reorient()'s own doc comment).
+          const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+          tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+          if (tmpIdealUp.lengthSquared() > 1e-6) {
+            tmpIdealUp.normalize();
+            const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
+            Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
+            if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
+          } else {
+            this.reorienting = false;
+          }
+        }
+      }
+
+      // Continuous ambient auto-relevel, independent of (and stacks harmlessly with) the hotkey's
+      // own one-shot reorient() above - see graphicsSettings.reorientationStrength's own comment.
+      // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
+      // already forces `up` to a fixed formula every frame just below, making this redundant).
+      if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
         const d = Vector3.Dot(Vector3.Up(), this.viewDir);
         tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
         if (tmpIdealUp.lengthSquared() > 1e-6) {
           tmpIdealUp.normalize();
-          const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
-          Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
-          if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
-        } else {
-          this.reorienting = false;
+          if (graphicsSettings.reorientationStrength >= 1) {
+            this.up.copyFrom(tmpIdealUp);
+          } else {
+            const rate = graphicsSettings.reorientationStrength * MAX_AMBIENT_RELEVEL_RATE;
+            const blend = 1 - Math.exp(-rate * deltaSeconds);
+            Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
+          }
         }
       }
-    }
 
-    // Continuous ambient auto-relevel, independent of (and stacks harmlessly with) the hotkey's
-    // own one-shot reorient() above - see graphicsSettings.reorientationStrength's own comment.
-    // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
-    // already forces `up` to a fixed formula every frame just below, making this redundant).
-    if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
-      const d = Vector3.Dot(Vector3.Up(), this.viewDir);
-      tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
-      if (tmpIdealUp.lengthSquared() > 1e-6) {
-        tmpIdealUp.normalize();
-        if (graphicsSettings.reorientationStrength >= 1) {
-          this.up.copyFrom(tmpIdealUp);
-        } else {
-          const rate = graphicsSettings.reorientationStrength * MAX_AMBIENT_RELEVEL_RATE;
-          const blend = 1 - Math.exp(-rate * deltaSeconds);
-          Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
-        }
+      if (this.planeLocked) {
+        // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
+        // rather than letting it free-tumble like the unlocked mode does - this is what makes
+        // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
+        const d = Vector3.Dot(this.planeAxis, this.viewDir);
+        this.up.copyFrom(this.planeAxis).subtractInPlace(this.viewDir.scale(d));
+        if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.Right());
+        this.up.normalize();
       }
-    }
 
-    if (this.planeLocked) {
-      // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
-      // rather than letting it free-tumble like the unlocked mode does - this is what makes
-      // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
-      const d = Vector3.Dot(this.planeAxis, this.viewDir);
-      this.up.copyFrom(this.planeAxis).subtractInPlace(this.viewDir.scale(d));
-      if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.Right());
+      // Defensive re-orthonormalization against drift from repeated small rotations/lerps.
+      const upDotView = Vector3.Dot(this.up, this.viewDir);
+      this.up.subtractInPlace(this.viewDir.scale(upDotView));
       this.up.normalize();
     }
-
-    // Defensive re-orthonormalization against drift from repeated small rotations/lerps.
-    const upDotView = Vector3.Dot(this.up, this.viewDir);
-    this.up.subtractInPlace(this.viewDir.scale(upDotView));
-    this.up.normalize();
 
     if (this.targetRadius !== null) {
       const blend = 1 - Math.exp(-RADIUS_LERP_RATE * deltaSeconds);
@@ -519,7 +618,16 @@ export class OrbitTrackballCamera {
       }
     } else {
       this.camera.position.copyFrom(tmpTargetPos);
-      this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
+      if (this.freeLooking) {
+        this.camera.rotationQuaternion!.copyFrom(this.lookAroundRot);
+      } else if (this.returnBlendStartRot) {
+        this.returnBlendElapsed += deltaSeconds;
+        const t = easeOutCubic(Math.min(1, this.returnBlendElapsed / LOOK_RETURN_SECONDS));
+        Quaternion.SlerpToRef(this.returnBlendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
+        if (t >= 1) this.returnBlendStartRot = null;
+      } else {
+        this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
+      }
     }
   }
 }
