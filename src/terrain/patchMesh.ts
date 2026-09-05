@@ -11,14 +11,29 @@ export interface PatchMeshData {
 }
 
 const scratch = new Vector3();
+const scratchColor = { r: 0, g: 0, b: 0 };
 
 // Default heightmap convention: black = lowest point, white = highest point. A plain
 // grayscale gradient rather than the earlier sand/rust palette - makes the actual height
 // data trivially readable at a glance, and gives Phase 5's terrain shader a clean starting
-// signal to key its texture blending off of.
+// signal to key its texture blending off of. Used as-is for any body with no real color
+// texture (see COLOR_MAP_SOURCES in scale.ts) - not just a placeholder anymore, but a
+// deliberate, honest fallback for bodies with no real color data (Venus, Eris, Pluto - see
+// public/textures/SOURCES.md).
 function colorForElevation(elevation: number, out: number[]) {
   const t = Math.min(1, Math.max(0, (elevation + 15) / 55));
   out.push(t, t, t, 1);
+}
+
+/** Real color when the heightfield has one loaded (see PlanetHeightfield.useColorImage),
+ * otherwise the same elevation-grayscale fallback as always. */
+function colorForVertex(dir: Vector3, elevation: number, heightfield: PlanetHeightfield, out: number[]) {
+  if (heightfield.hasColorImage) {
+    heightfield.colorAt(dir, scratchColor);
+    out.push(scratchColor.r, scratchColor.g, scratchColor.b, 1);
+  } else {
+    colorForElevation(elevation, out);
+  }
 }
 
 /**
@@ -57,7 +72,7 @@ export function buildPatchMesh(
       extPositions.push(scratch.x * r, scratch.y * r, scratch.z * r);
       if (i >= 0 && i < res && j >= 0 && j < res) {
         uvs.push(i / (res - 1), j / (res - 1));
-        colorForElevation(elevation, colors);
+        colorForVertex(scratch, elevation, heightfield, colors);
       }
     }
   }

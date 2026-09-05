@@ -1,7 +1,7 @@
-import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3, VertexData } from "@babylonjs/core";
+import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Texture, Vector3, VertexData } from "@babylonjs/core";
 import { PlanetTerrain } from "../terrain/planetTerrain";
 import { PlanetHeightfield } from "../terrain/heightfield";
-import type { HeightmapImageData } from "../terrain/heightmapImage";
+import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
 import { CelestialOrbit, type CelestialOrbitOptions } from "./celestialOrbit";
 import { bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
 import { mulberry32 } from "../terrain/prng";
@@ -109,8 +109,25 @@ export class CelestialBody {
    * @param actualSemiMajorAxis The real-world-proportional distance this body's orbit blends
    * toward in "actual" scale mode - omit for bodies not in the toggle's scope (e.g. dwarf
    * planets/moons with no accurate real-distance figure entered yet).
+   * @param colorImage A real color/diffuse map preloaded for this body (see COLOR_MAP_SOURCES
+   * in scale.ts) - only meaningful for landable bodies; switches PlanetHeightfield's per-vertex
+   * terrain color to sample it instead of the elevation-grayscale fallback. Omit to keep that
+   * fallback (Venus/Pluto/Eris, or if a real map failed to load - see
+   * public/textures/SOURCES.md for why those specifically have none).
+   * @param gasGiantColorTextureUrl A real cloud-band color texture URL for a gas giant (see
+   * COLOR_MAP_SOURCES) - loaded directly as a Babylon Texture (no CPU-side decoding needed,
+   * unlike colorImage, since a gas giant's sphere just needs a GPU diffuse texture, not
+   * per-vertex terrain sampling). Omit to keep the procedural band generator.
    */
-  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, heightmapImage?: HeightmapImageData, actualSemiMajorAxis?: number) {
+  constructor(
+    scene: Scene,
+    def: BodyDef,
+    orbitOptions: CelestialOrbitOptions,
+    heightmapImage?: HeightmapImageData,
+    actualSemiMajorAxis?: number,
+    colorImage?: ColorImageData,
+    gasGiantColorTextureUrl?: string,
+  ) {
     this.def = def;
     this.orbit = new CelestialOrbit(scene, orbitOptions);
     this.radius = bodyRadius(def);
@@ -121,6 +138,7 @@ export class CelestialBody {
     if (this.landable) {
       this.terrain = new PlanetTerrain(scene, this.radius, def.seed, this.orbit.spinNode);
       if (heightmapImage) this.terrain.heightfield.useImage(heightmapImage);
+      if (colorImage) this.terrain.heightfield.useColorImage(colorImage);
       this.mesh = null;
       // Seed root-level patches once up front (each call only budgets a few patches - three
       // calls comfortably covers all 6 root faces) using a point far enough away that no
@@ -135,9 +153,13 @@ export class CelestialBody {
       this.mesh = MeshBuilder.CreateSphere(`${def.name}Mesh`, { diameter: this.radius * 2, segments: 32 }, scene);
       this.mesh.parent = this.orbit.spinNode;
       const material = new StandardMaterial(`${def.name}Material`, scene);
-      const maxTextureSize = scene.getEngine().getCaps().maxTextureSize;
-      const { width, height } = textureResolutionFor(def, maxTextureSize);
-      material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed, width, height);
+      if (gasGiantColorTextureUrl) {
+        material.diffuseTexture = new Texture(gasGiantColorTextureUrl, scene);
+      } else {
+        const maxTextureSize = scene.getEngine().getCaps().maxTextureSize;
+        const { width, height } = textureResolutionFor(def, maxTextureSize);
+        material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed, width, height);
+      }
       material.specularColor = Color3.Black();
       material.useLogarithmicDepth = true;
       this.mesh.material = material;

@@ -4,10 +4,10 @@ import { Star } from "../environment/star";
 import { Starfield } from "../environment/starfield";
 import { CelestialBody } from "./celestialBody";
 import { AsteroidBelt } from "./asteroidBelt";
-import { BODY_DEFS, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
+import { BODY_DEFS, COLOR_MAP_SOURCES, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
 import { orbitalScale } from "./orbitalScale";
 import { mulberry32 } from "../terrain/prng";
-import type { HeightmapImageData } from "../terrain/heightmapImage";
+import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
 
 const tmpSunDirection = new Vector3();
 
@@ -38,8 +38,17 @@ export class SolarSystem {
   private readonly orbitLines: { mesh: LinesMesh; gameplaySemiMajorAxis: number; getCurrentSemiMajorAxis: () => number }[] = [];
 
   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
-   * as close to "fixed at infinity" as the clipping range allows. */
-  constructor(scene: Scene, farClip: number, heightmapImages: Partial<Record<string, HeightmapImageData>> = {}) {
+   * as close to "fixed at infinity" as the clipping range allows.
+   * @param colorImages Preloaded real color/diffuse maps for landable bodies (see
+   * COLOR_MAP_SOURCES/preloadColorMaps) - gas giants' real color textures are looked up
+   * directly from COLOR_MAP_SOURCES by URL below instead, since they're loaded as a plain GPU
+   * Texture rather than CPU-decoded pixel data (see CelestialBody's constructor doc comment). */
+  constructor(
+    scene: Scene,
+    farClip: number,
+    heightmapImages: Partial<Record<string, HeightmapImageData>> = {},
+    colorImages: Partial<Record<string, ColorImageData>> = {},
+  ) {
     this.star = new Star(scene, STAR_RADIUS);
     new Starfield(scene, farClip * 0.95);
 
@@ -74,6 +83,8 @@ export class SolarSystem {
         },
         heightmapImages[def.name],
         actualSceneDistance(def.auDistance),
+        colorImages[def.name],
+        COLOR_MAP_SOURCES[def.name]?.url,
       );
       const line = body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
       this.orbitLineMeshes.push(line);
@@ -103,6 +114,7 @@ export class SolarSystem {
         },
         heightmapImages[def.name],
         actualSemiMajorAxis,
+        colorImages[def.name],
       );
       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
       const line = moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);

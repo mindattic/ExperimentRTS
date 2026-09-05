@@ -3,7 +3,7 @@ import { Fbm3 } from "./noise";
 import { TOPOLOGIES } from "./topology";
 import { mulberry32 } from "./prng";
 import { smoothstep } from "./mathUtils";
-import type { HeightmapImageData } from "./heightmapImage";
+import type { ColorImageData, HeightmapImageData } from "./heightmapImage";
 
 interface BiomeSeed {
   x: number;
@@ -34,6 +34,7 @@ export class PlanetHeightfield {
   private readonly fbm: Fbm3;
   private readonly seeds: BiomeSeed[] = [];
   private image: HeightmapImageData | null = null;
+  private colorImage: ColorImageData | null = null;
 
   constructor(seed: number) {
     this.fbm = new Fbm3(seed, 5, 2.05, 0.48);
@@ -58,6 +59,29 @@ export class PlanetHeightfield {
     this.image = image;
   }
 
+  /** Switches this heightfield to sample a real color image (see colorAt) - call once, after
+   * construction, when the body's real color texture has finished loading. Independent of
+   * useImage: a body can have real elevation without real color (or, in principle, vice
+   * versa) - see COLOR_MAP_SOURCES/HEIGHTMAP_SOURCES in scale.ts. */
+  useColorImage(image: ColorImageData): void {
+    this.colorImage = image;
+  }
+
+  get hasColorImage(): boolean {
+    return this.colorImage !== null;
+  }
+
+  /** Equirectangular convention matching the source photos: y is the polar axis, row 0 is the
+   * north pole, and longitude increases eastward from an arbitrary prime meridian (this game
+   * has no notion of a "real" Greenwich to align to, so any fixed convention is fine as long
+   * as it's used consistently for a given body). Shared by elevationFromImage and colorAt so
+   * a body's color and elevation images always sample in perfect alignment. */
+  private static latLonUV(dir: Vector3): { u: number; v: number } {
+    const lat = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    const lon = Math.atan2(dir.z, dir.x);
+    return { u: lon / (Math.PI * 2) + 0.5, v: 0.5 - lat / Math.PI };
+  }
+
   /** Elevation above/below the base planet radius, in meters, at a unit sphere direction. */
   elevationAt(dir: Vector3): number {
     if (this.image) return this.elevationFromImage(this.image, dir);
@@ -65,14 +89,7 @@ export class PlanetHeightfield {
   }
 
   private elevationFromImage(image: HeightmapImageData, dir: Vector3): number {
-    // Equirectangular convention matching the source photos: y is the polar axis, row 0 is
-    // the north pole, and longitude increases eastward from an arbitrary prime meridian (this
-    // game has no notion of a "real" Greenwich to align to, so any fixed convention is fine as
-    // long as it's used consistently for a given body).
-    const lat = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-    const lon = Math.atan2(dir.z, dir.x);
-    const u = lon / (Math.PI * 2) + 0.5;
-    const v = 0.5 - lat / Math.PI;
+    const { u, v } = PlanetHeightfield.latLonUV(dir);
 
     const fx = u * image.width;
     const fy = v * (image.height - 1);
@@ -88,6 +105,34 @@ export class PlanetHeightfield {
     const bottom = sample(x0, y1) * (1 - tx) + sample(x1, y1) * tx;
     const t = top * (1 - ty) + bottom * ty;
     return (t - 0.5) * 2 * IMAGE_AMPLITUDE_METERS;
+  }
+
+  /** Real color (0-1 per channel) at a unit sphere direction, from the image passed to
+   * useColorImage - only meaningful when hasColorImage is true. Bilinear + antimeridian wrap,
+   * identical in shape to elevationFromImage (and built on the exact same latLonUV formula),
+   * so color and elevation are always sampled from the same point on the body. */
+  colorAt(dir: Vector3, out: { r: number; g: number; b: number }): void {
+    const image = this.colorImage!;
+    const { u, v } = PlanetHeightfield.latLonUV(dir);
+
+    const fx = u * image.width;
+    const fy = v * (image.height - 1);
+    const x0 = Math.floor(fx) % image.width;
+    const x1 = (x0 + 1) % image.width;
+    const y0 = Math.max(0, Math.min(image.height - 1, Math.floor(fy)));
+    const y1 = Math.max(0, Math.min(image.height - 1, y0 + 1));
+    const tx = fx - Math.floor(fx);
+    const ty = fy - y0;
+
+    const sample = (x: number, y: number, channel: number) => image.pixels[(y * image.width + x) * 4 + channel] / 255;
+    for (let channel = 0; channel < 3; channel++) {
+      const top = sample(x0, y0, channel) * (1 - tx) + sample(x1, y0, channel) * tx;
+      const bottom = sample(x0, y1, channel) * (1 - tx) + sample(x1, y1, channel) * tx;
+      const value = top * (1 - ty) + bottom * ty;
+      if (channel === 0) out.r = value;
+      else if (channel === 1) out.g = value;
+      else out.b = value;
+    }
   }
 
   private elevationFromNoise(dir: Vector3): number {

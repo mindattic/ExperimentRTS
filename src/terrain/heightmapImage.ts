@@ -7,6 +7,16 @@ export interface HeightmapImageData {
   samples: Uint8ClampedArray;
 }
 
+/** A loaded real color/diffuse map, resampled to a specific target resolution - see
+ * loadColorImage(). Same equirectangular convention as HeightmapImageData (row 0 = north
+ * pole) so a body's color and elevation images always sample in alignment. */
+export interface ColorImageData {
+  width: number;
+  height: number;
+  /** RGBA, one byte per channel per pixel, row-major, top row = north pole. */
+  pixels: Uint8ClampedArray;
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -43,4 +53,20 @@ export async function loadHeightmapImage(url: string, targetWidth: number, targe
     samples[i] = Math.max(minSample, (r + g + b) / 3);
   }
   return { width: targetWidth, height: targetHeight, samples };
+}
+
+/**
+ * Loads a real equirectangular color/diffuse image, resampled (via the same offscreen-canvas
+ * approach as loadHeightmapImage) to `targetWidth`x`targetHeight` - keeps the full RGBA data
+ * instead of collapsing to grayscale, for PlanetHeightfield.colorAt to sample per-vertex.
+ */
+export async function loadColorImage(url: string, targetWidth: number, targetHeight: number): Promise<ColorImageData> {
+  const img = await loadImage(url);
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+  return { width: targetWidth, height: targetHeight, pixels: new Uint8ClampedArray(imageData.data) };
 }

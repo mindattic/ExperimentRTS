@@ -19,9 +19,9 @@ import { FreeFlyCamera } from "./camera/freeFlyCamera";
 import { computeLookRotationToRef } from "./camera/lookRotation";
 import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./camera/pathAvoidance";
 import { SolarSystem } from "./solarSystem/solarSystem";
-import { BODY_DEFS, actualSceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
+import { BODY_DEFS, actualSceneDistance, COLOR_MAP_SOURCES, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
 import { orbitalScale } from "./solarSystem/orbitalScale";
-import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
+import { loadColorImage, loadHeightmapImage, type ColorImageData, type HeightmapImageData } from "./terrain/heightmapImage";
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI, type SelectedEntity } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
@@ -133,6 +133,35 @@ async function preloadHeightmaps(maxTextureSize: number): Promise<Partial<Record
   return images;
 }
 
+/** Loads every LANDABLE body's real color/diffuse map (see scale.ts's COLOR_MAP_SOURCES) up
+ * front, same shape and fallback behavior as preloadHeightmaps - resampled to the same
+ * size-proportional target resolution as that body's own heightmap (textureResolutionFor is
+ * per-BODY, not per-source, so color and elevation share one target size for a given body).
+ * Gas giants are deliberately excluded here: their real color texture (if any) is loaded
+ * directly as a GPU Texture at its own native resolution in SolarSystem/CelestialBody instead
+ * of being CPU-decoded through this pixel-array path, which only rocky/dwarf terrain needs
+ * (see CelestialBody's colorImage vs gasGiantColorTextureUrl params). */
+async function preloadColorMaps(maxTextureSize: number): Promise<Partial<Record<string, ColorImageData>>> {
+  const results = await Promise.all(
+    BODY_DEFS.filter((def) => def.kind !== "gasGiant" && COLOR_MAP_SOURCES[def.name]).map(async (def) => {
+      const source = COLOR_MAP_SOURCES[def.name]!;
+      const { width, height } = textureResolutionFor(def, maxTextureSize);
+      try {
+        const image = await loadColorImage(source.url, width, height);
+        return [def.name, image] as const;
+      } catch (err) {
+        console.warn(`Failed to load real color texture for ${def.name}, using procedural terrain color instead.`, err);
+        return null;
+      }
+    }),
+  );
+  const images: Partial<Record<string, ColorImageData>> = {};
+  for (const result of results) {
+    if (result) images[result[0]] = result[1];
+  }
+  return images;
+}
+
 async function main() {
   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
   const scene = new Scene(engine);
@@ -149,7 +178,8 @@ async function main() {
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
   const heightmapImages = await preloadHeightmaps(engine.getCaps().maxTextureSize);
-  const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages);
+  const colorImages = await preloadColorMaps(engine.getCaps().maxTextureSize);
+  const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages, colorImages);
   let focused = solarSystem.focused;
   let thresholds = radiusThresholds(focused.radius);
 

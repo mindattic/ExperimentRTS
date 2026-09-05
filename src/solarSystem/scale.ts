@@ -232,6 +232,31 @@ export const HEIGHTMAP_SOURCES: Partial<Record<string, HeightmapSource>> = {
   Earth: { url: "/heightmaps/earth_source.png", sourceWidth: 2160 },
   Moon: { url: "/heightmaps/moon_source.jpg", sourceWidth: 1024 },
   Mars: { url: "/heightmaps/mars_source.jpg", sourceWidth: 1024 },
+  // New Horizons LORRI/MVIC global DEM (July 2017 release) - see public/heightmaps/SOURCES.md.
+  Pluto: { url: "/heightmaps/pluto_source.jpg", sourceWidth: 1024 },
+};
+
+export interface ColorMapSource {
+  /** Path under public/, served as a static asset. */
+  url: string;
+  /** Pixel width of the actual downloaded source file - same role as
+   * HeightmapSource.sourceWidth, feeding the same shared-density calculation below so no
+   * body's color texture is ever upscaled past what its real source actually offers. */
+  sourceWidth: number;
+}
+
+/** Real color/diffuse textures - landable bodies get them applied per-vertex via
+ * PlanetHeightfield.colorAt (see celestialBody.ts), gas giants get them applied directly as a
+ * material diffuse texture. See public/textures/SOURCES.md for provenance/license per file,
+ * and for which bodies (Venus, Moon, Pluto, Eris) deliberately have no entry here and why. */
+export const COLOR_MAP_SOURCES: Partial<Record<string, ColorMapSource>> = {
+  Mercury: { url: "/textures/mercury_color.jpg", sourceWidth: 1024 },
+  Earth: { url: "/textures/earth_color.jpg", sourceWidth: 2048 },
+  Mars: { url: "/textures/mars_color.jpg", sourceWidth: 1024 },
+  Jupiter: { url: "/textures/jupiter_color.jpg", sourceWidth: 1024 },
+  Saturn: { url: "/textures/saturn_color.jpg", sourceWidth: 2048 },
+  Uranus: { url: "/textures/uranus_color.jpg", sourceWidth: 2048 },
+  Neptune: { url: "/textures/neptune_color.jpg", sourceWidth: 2048 },
 };
 
 /**
