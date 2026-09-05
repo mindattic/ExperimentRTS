@@ -223,6 +223,7 @@ async function main() {
       if (mode === "orbitEntity") return selectionUI.selectedEntity?.name ?? null;
       return null;
     },
+    () => (!freeCamActive && !transiting && mode === "orbit" ? solarSystem.focused : null),
     () => freeFlyCamera.isCursorModeActive,
     () => economyManager,
     () => transiting,

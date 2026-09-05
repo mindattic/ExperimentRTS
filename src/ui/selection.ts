@@ -1,7 +1,37 @@
 import { AbstractEngine, Matrix, type Node, type PickingInfo, Scene, Vector3 } from "@babylonjs/core";
 import type { SolarSystem } from "../solarSystem/solarSystem";
+import type { CelestialBody } from "../solarSystem/celestialBody";
 import type { FreeFlyCamera } from "../camera/freeFlyCamera";
 import type { EconomyManager } from "../economy/economyManager";
+
+const AU_IN_KM = 149_597_870.7;
+/** Real (not compressed) Earth radius, km - used to convert a moon's
+ * moonOrbitRadiusInParentRadiiActual (parent radii) into real km. */
+const EARTH_RADIUS_KM = 6371;
+
+function formatKm(km: number): string {
+  return km >= 1_000_000 ? `${(km / 1_000_000).toFixed(2)}M km` : `${Math.round(km).toLocaleString()} km`;
+}
+
+/** "How far away it is" for the selection/focus labels - real distance from the Sun (in AU,
+ * plus km too when under 1 AU where an AU figure alone is an awkward fraction) for a
+ * star-orbiting body, or real distance from its parent body (km) for a moon - always the TRUE
+ * real-world figure (BodyDef.auDistance / moonOrbitRadiusInParentRadiiActual), independent of
+ * the current Actual/Gameplay orbital-scale blend (see orbitalScale.ts) or which camera is
+ * looking at it, since "how far is Mars from the Sun" is a fixed astronomical fact, not a
+ * live camera-to-target reading. */
+function formatBodyDistance(body: CelestialBody, allBodies: readonly CelestialBody[]): string | null {
+  if (body.def.orbitsAround) {
+    const parent = allBodies.find((b) => b.def.name === body.def.orbitsAround);
+    if (!parent || !body.def.moonOrbitRadiusInParentRadiiActual) return null;
+    const parentRadiusKm = parent.def.realDiameterRatio * EARTH_RADIUS_KM;
+    return `${formatKm(body.def.moonOrbitRadiusInParentRadiiActual * parentRadiusKm)} from ${parent.def.name}`;
+  }
+  if (!body.def.auDistance) return null; // 0 for non-star-orbiting defs (shouldn't reach here, but defensive)
+  const au = body.def.auDistance;
+  const auText = `${au.toFixed(2)} AU`;
+  return au < 1 ? `${auText} (${formatKm(au * AU_IN_KM)}) from the Sun` : `${auText} from the Sun`;
+}
 
 const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body's orbit
 
@@ -56,6 +86,9 @@ export class SelectionUI {
   private readonly orbitFocusLabelEl: HTMLElement;
   private readonly hoverLabelEl: HTMLElement;
   private readonly getFocusLabel: () => string | null;
+  /** Null while orbiting a ship/asteroid (orbitEntity mode) rather than a planet/moon - distance-
+   * from-the-Sun/parent (see formatBodyDistance) only makes sense for the latter. */
+  private readonly getFocusedBody: () => CelestialBody | null;
   private readonly isCursorModeActive: () => boolean;
   private readonly getEconomyManager: () => EconomyManager;
   private readonly isInputLocked: () => boolean;
@@ -77,6 +110,7 @@ export class SelectionUI {
     freeFlyCamera: FreeFlyCamera,
     isFreeCamActive: () => boolean,
     getFocusLabel: () => string | null,
+    getFocusedBody: () => CelestialBody | null,
     isCursorModeActive: () => boolean,
     getEconomyManager: () => EconomyManager,
     isInputLocked: () => boolean,
@@ -87,6 +121,7 @@ export class SelectionUI {
     this.freeFlyCamera = freeFlyCamera;
     this.isFreeCamActive = isFreeCamActive;
     this.getFocusLabel = getFocusLabel;
+    this.getFocusedBody = getFocusedBody;
     this.isCursorModeActive = isCursorModeActive;
     this.getEconomyManager = getEconomyManager;
     this.isInputLocked = isInputLocked;
@@ -338,7 +373,9 @@ export class SelectionUI {
       // plain always-on top-center label naming whatever you're currently orbiting instead.
       this.reticleEl.hidden = true;
       this.orbitFocusLabelEl.hidden = false;
-      this.orbitFocusLabelEl.textContent = focusLabel;
+      const focusedBody = this.getFocusedBody();
+      const distance = focusedBody && formatBodyDistance(focusedBody, this.solarSystem.bodies);
+      this.orbitFocusLabelEl.textContent = distance ? `${focusLabel} · ${distance}` : focusLabel;
       return;
     }
     this.orbitFocusLabelEl.hidden = true;
@@ -385,6 +422,7 @@ export class SelectionUI {
     this.reticleEl.style.transform = `translate(${screenCenter.x - size / 2}px, ${screenCenter.y - size / 2}px)`;
     this.reticleEl.style.width = `${size}px`;
     this.reticleEl.style.height = `${size}px`;
-    this.reticleLabelEl.textContent = body.def.name;
+    const targetDistance = formatBodyDistance(body, this.solarSystem.bodies);
+    this.reticleLabelEl.textContent = targetDistance ? `${body.def.name} · ${targetDistance}` : body.def.name;
   }
 }
