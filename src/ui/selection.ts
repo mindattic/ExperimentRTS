@@ -343,11 +343,12 @@ export class SelectionUI {
     const edgePoint = center.add(camera.getDirection(Vector3.Right()).scale(body.radius));
     const screenEdge = Vector3.Project(edgePoint, Matrix.Identity(), transform, viewport);
     const apparentRadius = Math.hypot(screenEdge.x - screenCenter.x, screenEdge.y - screenCenter.y);
-    // Corners sit outside the planet's silhouette, not overlapping it: box half-size is ~1.7x
-    // the apparent radius, giving clear margin between the bracket and the body itself. No upper
-    // clamp - "the corners should frame the planet perfectly regardless of distance"; only a
-    // small floor so it doesn't collapse to a literal 0px box once genuinely too far to matter.
-    const size = Math.max(MIN_RETICLE_SIZE, apparentRadius * 3.4);
+    // Corners sit just outside the planet's silhouette, not overlapping it: box half-size is
+    // ~1.2x the apparent radius - a snug frame, not floating far outside it ("selection boxes
+    // are too big" at the old 1.7x). No upper clamp - "the corners should frame the planet
+    // perfectly regardless of distance"; only a small floor so it doesn't collapse to a literal
+    // 0px box once genuinely too far to matter.
+    const size = Math.max(MIN_RETICLE_SIZE, apparentRadius * 2.4);
 
     this.reticleEl.hidden = false;
     this.reticleEl.style.transform = `translate(${screenCenter.x - size / 2}px, ${screenCenter.y - size / 2}px)`;
