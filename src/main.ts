@@ -759,10 +759,23 @@ async function main() {
     stellarDust.stop();
   }
 
+  // orbitCamera.attach() alone never actually computes camera.position/rotationQuaternion (only
+  // update() does, from viewDir/radius) - without this, toggleFreeCam() below captures the
+  // camera's raw construction-time default (world origin, identity rotation, i.e. sitting at the
+  // star facing an arbitrary direction) instead of its real orbit pose around Earth, since no
+  // render/update tick has happened yet at this point in startup.
+  orbitCamera.update(0);
+  // Camera.globalPosition is a CACHED field that Babylon only refreshes as a side effect of
+  // computing the view matrix (normally once per rendered frame) - camera.position alone
+  // (just set correctly above) isn't enough. Since engine.runRenderLoop hasn't started yet at
+  // this point in boot, globalPosition would otherwise still read its construction-time default
+  // (world origin) despite position now being correct - forcing the view matrix here flushes it.
+  orbitCamera.camera.getViewMatrix(true);
+
   // Boots straight into free cam under FREE_CAM_ONLY, reusing toggleFreeCam's own "on" branch
   // (which captures whichever camera is currently active's pose) rather than duplicating that
-  // logic - orbitCamera is already attached with its normal default pose at this point, so this
-  // just carries that straight over into free cam's starting position.
+  // logic - orbitCamera now has its normal default pose established (see the update(0) call just
+  // above), so this just carries that straight over into free cam's starting position.
   if (FREE_CAM_ONLY) toggleFreeCam();
 
   engine.runRenderLoop(() => {

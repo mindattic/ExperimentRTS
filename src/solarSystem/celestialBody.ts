@@ -71,7 +71,11 @@ function createRingMesh(scene: Scene, name: string, innerRadius: number, outerRa
   material.backFaceCulling = false;
   material.useLogarithmicDepth = true;
   mesh.material = material;
-  mesh.isPickable = false;
+  // Pickable (parented to the same spinNode as the planet's own mesh - see the caller below),
+  // so clicking/hovering the visually-apparent ring around Saturn resolves to Saturn too,
+  // instead of a "miss" that read as a flickering raycast right at the disc's edge where the
+  // ring visually extends past the sphere's true silhouette.
+  mesh.isPickable = true;
   mesh.rotation.x = 0.35; // tilt so it doesn't read as a flat edge-on line from most angles
   return mesh;
 }
