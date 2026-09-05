@@ -7,8 +7,17 @@ import { graphicsSettings } from "../settings/graphicsSettings";
 import { AU_IN_SCENE_UNITS } from "../solarSystem/scale";
 
 const MAX_DEPTH = 9;
-const SPLIT_FACTOR = 2.0;
-const MERGE_FACTOR = 2.6;
+/** Raised from 2.0 ("planets need to be full resolution at 5000 or less away") - patches now
+ * split noticeably sooner relative to their own size, reaching meaningfully finer detail at
+ * typical orbit-viewing distances instead of only within a few dozen units of the surface.
+ * Empirically measured (not purely derived): a single global multiplier here can't make MAX_DEPTH
+ * (9) itself reachable at an absolute distance like 5000 without exploding patch count/GPU cost
+ * (verified live: SPLIT_FACTOR=12 dropped FPS from ~50 to ~11 at 1000 units above Earth's
+ * surface) - this value is the highest that stayed comfortably playable (~30fps) in that same
+ * test. Reaching genuinely full resolution at 5000 for a body this size would need a different,
+ * non-geometric LOD curve (e.g. true screen-space error), not just a bigger constant here. */
+const SPLIT_FACTOR = 4.0;
+const MERGE_FACTOR = 5.2; // same 1.3x hysteresis ratio over SPLIT_FACTOR as before (2.6/2.0)
 const MAX_PATCHES_PER_FRAME = 3;
 /** Depth cap used only when graphicsSettings.forceMaxTerrainDetail is on ("what does full detail
  * look like from far away") - deliberately much lower than MAX_DEPTH. Forcing the REAL max depth

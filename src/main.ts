@@ -39,14 +39,11 @@ const orbitalScaleBadge = document.getElementById("orbitalScaleBadge") as HTMLEl
 const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
 const devStats = document.getElementById("devStats") as HTMLElement;
 
-/** What's left disabled after "controls are getting out of hand ... just free cam" walked back
- * to a curated subset: the raw F-key free-cam toggle and jumpToRtsAtSpot's cursor-click+Space
- * ground-mode fast-jump. Orbit/orbitEntity "focus mode" (double-tap F - see
- * ENTER_FOCUS_DOUBLE_TAP_MS) and ground mode's own natural zoom-in entry from there are
- * deliberately NOT gated by this - the user asked for exactly that flow back ("move quickly
- * across the system in an organic manner"). None of the gated logic is removed, just skipped
- * while this is true - flip it back to false to restore it all. */
-const FREE_CAM_ONLY = true;
+/** RTS ground mode is disabled for now ("disable RTS mode for now") - Free Cam and Focus/Orbit
+ * are the two supported modes. Gates every path INTO ground mode (jumpToRtsAtSpot's fast jump
+ * from free cam, and orbit mode's own automatic zoom-in transition below) - flip back to true
+ * to restore it; none of the gated logic itself is removed. */
+const RTS_MODE_ENABLED = false;
 
 /** Fixed "parking distance" focus mode zooms to when double-tapping F around a selected body -
  * not the current distance (clamped), so committing to focus mode always reads the same
@@ -55,7 +52,7 @@ const FOCUS_MODE_ORBIT_RADIUS_FACTOR = 2.5;
 
 /** How long a second F press must land within a first for enterOrbit to fire - the same
  * "double-actuate to commit" idea as the mouse double-click-to-zoom, so a single stray tap of F
- * (now overloaded onto the same key as the disabled freeCam toggle) can't accidentally commit to
+ * (which also toggles free cam on its own - both share this key) can't accidentally commit to
  * focus mode. */
 const ENTER_FOCUS_DOUBLE_TAP_MS = 400;
 
@@ -252,7 +249,7 @@ async function main() {
       travelPressed = true;
     }
     if (e.code === keybindings.get("reorient")) reorientPressed = true;
-    if (e.code === keybindings.get("freeCam") && !FREE_CAM_ONLY) freeCamTogglePressed = true;
+    if (e.code === keybindings.get("freeCam")) freeCamTogglePressed = true;
     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
     if (e.code === keybindings.get("toggleOrbitalScale") && !e.repeat) orbitalScaleTogglePressed = true;
     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
@@ -267,17 +264,17 @@ async function main() {
       // - with nothing selected yet, this is the original keyboard alternative to left-click for
       //   the free-cam reticle - clicking under Pointer Lock works too, but a dedicated key is
       //   easier to hit without disturbing mouselook.
-      // All three "commit" branches stay disabled while FREE_CAM_ONLY is on (double-tapping F is
-      // the one deliberately-enabled way into focus mode - see ENTER_FOCUS_DOUBLE_TAP_MS below) -
-      // only plain selection (the final else) still works, so Space just acts like the reticle key.
+      // The jump-to-RTS-ground branch stays disabled while RTS_MODE_ENABLED is off - see its own
+      // comment. The two orbit-entry branches (and plain selection, the final else) are always
+      // available.
       const spot = selectionUI.selectedSurfacePoint;
       const spotBody = spot ? solarSystem.bodies[spot.bodyIndex] : null;
-      if (!FREE_CAM_ONLY && spot && spotBody?.landable) {
+      if (RTS_MODE_ENABLED && spot && spotBody?.landable) {
         jumpToRtsAtSpot(spotBody, spot.localDir);
         selectionUI.selectedSurfacePoint = null;
-      } else if (!FREE_CAM_ONLY && selectionUI.targetIndex !== null) {
+      } else if (selectionUI.targetIndex !== null) {
         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
-      } else if (!FREE_CAM_ONLY && selectionUI.selectedEntity !== null) {
+      } else if (selectionUI.selectedEntity !== null) {
         // A selected ship/asteroid has no surface spot to jump to RTS at - Space just does the
         // same smooth orbit-entry double-tapping F (enterOrbit) would, same as the body case above.
         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
@@ -293,7 +290,7 @@ async function main() {
       (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null)
     ) {
       // Needs a double-tap (not a single press) to commit - see ENTER_FOCUS_DOUBLE_TAP_MS's own
-      // comment for why (this key is shared with the otherwise-inert freeCam toggle).
+      // comment for why (this key is shared with the freeCam toggle).
       const now = performance.now();
       if (now - lastEnterOrbitTapTime <= ENTER_FOCUS_DOUBLE_TAP_MS) {
         enterOrbitPressed = true;
@@ -854,11 +851,11 @@ async function main() {
   // (world origin) despite position now being correct - forcing the view matrix here flushes it.
   orbitCamera.camera.getViewMatrix(true);
 
-  // Boots straight into free cam under FREE_CAM_ONLY, reusing toggleFreeCam's own "on" branch
-  // (which captures whichever camera is currently active's pose) rather than duplicating that
-  // logic - orbitCamera now has its normal default pose established (see the update(0) call just
+  // Boots straight into free cam, reusing toggleFreeCam's own "on" branch (which captures
+  // whichever camera is currently active's pose) rather than duplicating that logic -
+  // orbitCamera now has its normal default pose established (see the update(0) call just
   // above), so this just carries that straight over into free cam's starting position.
-  if (FREE_CAM_ONLY) toggleFreeCam();
+  toggleFreeCam();
 
   engine.runRenderLoop(() => {
     const dt = engine.getDeltaTime() / 1000;
@@ -982,6 +979,7 @@ async function main() {
             // exitToOrbitMode) is the actual, narrowly-targeted guard against bouncing straight
             // back into ground mode mid fly-up; ordinary scroll-in should enter ground mode
             // promptly the moment the interpolating radius crosses below threshold, mid-lerp or not.
+            RTS_MODE_ENABLED &&
             focused.landable &&
             groundExitCooldownRemaining <= 0 &&
             orbitCamera.radius < thresholds.enterGround

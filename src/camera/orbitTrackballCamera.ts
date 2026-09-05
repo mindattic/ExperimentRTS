@@ -26,6 +26,12 @@ const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
 const ENTRY_BLEND_MIN_SECONDS = 0.5;
 const ENTRY_BLEND_MAX_SECONDS = 3.0;
 const ENTRY_BLEND_SPEED = 3000;
+/** How close (in degrees) plane-locked mode's viewDir is allowed to get to `planeAxis` (either
+ * pole) - see the pole-clamp block in rotateStep for why this can't be 0. Small enough to be
+ * visually imperceptible as a "dead zone" while keeping the pitch-axis cross product safely
+ * away from degenerating to zero. */
+const POLE_CLAMP_DEGREES = 2;
+const MAX_POLE_COS = Math.cos((POLE_CLAMP_DEGREES * Math.PI) / 180);
 
 const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
@@ -34,6 +40,7 @@ const tmpIdealUp = new Vector3();
 const tmpForward = new Vector3();
 const tmpTargetPos = new Vector3();
 const tmpTargetRot = new Quaternion();
+const tmpPerp = new Vector3();
 
 function easeOutCubic(t: number): number {
   const u = 1 - t;
@@ -228,10 +235,16 @@ export class OrbitTrackballCamera {
     this.velPitch = 0;
   }
 
-  /** Cancels any drag/inertia in progress and starts blending roll back to a level horizon at
-   * the current view direction (never changes which point on the planet is centered). Roll
-   * only ever re-levels via this explicit call - it does not happen automatically on its own
-   * when the camera settles. */
+  /** Cancels any drag/inertia in progress and starts blending back to a level view: in the free
+   * (unlocked) trackball mode, that means rolling `up` back to the horizon without changing
+   * which point on the planet is centered - see the unlocked branch in update(). In plane-
+   * locked mode, `up` is already forced level every single frame regardless (see the
+   * unconditional block at the end of update()), so there's nothing for THIS method to do
+   * there via roll alone; instead it blends PITCH back toward the equator (viewDir
+   * perpendicular to planeAxis), preserving the current yaw/azimuth - undoing a climb toward
+   * either pole is this mode's equivalent of "return to a comfortable view" ("reorient should
+   * work on orbit mode" - plane-locked is the default there, so unlocked-only releveling meant
+   * the hotkey was silently a no-op for most orbit-mode sessions). */
   reorient(): void {
     this.dragging = false;
     this.velYaw = 0;
@@ -337,6 +350,32 @@ export class OrbitTrackballCamera {
       }
       this.viewDir.normalize();
     }
+
+    if (this.planeLocked) {
+      // Pull viewDir back onto the MAX_POLE_COS boundary circle if this step pushed it past
+      // (or exactly onto) either pole - without this, the pitch-axis cross product above
+      // degenerates to zero right at the pole and permanently freezes all further pitch input
+      // (yaw alone can't escape either, since yawing around planeAxis while viewDir IS
+      // planeAxis is a no-op) - "orbit mode gets locked at the poles, it doesn't get full
+      // rotation". Reprojects along the current meridian (azimuth) rather than just clamping,
+      // so it reads as hitting a firm limit, not a stuck/dead camera.
+      const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
+      if (Math.abs(cosFromPole) > MAX_POLE_COS) {
+        tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
+        if (tmpPerp.lengthSquared() < 1e-9) {
+          // No stable azimuth to preserve (viewDir landed exactly on the pole in one step, e.g.
+          // a huge single-frame drag) - any perpendicular direction is as good as any other.
+          tmpPerp.copyFrom(Vector3.Right());
+          tmpPerp.subtractInPlace(this.planeAxis.scale(Vector3.Dot(tmpPerp, this.planeAxis)));
+          if (tmpPerp.lengthSquared() < 1e-9) tmpPerp.copyFrom(Vector3.Forward());
+        }
+        tmpPerp.normalize();
+        const sign = cosFromPole >= 0 ? 1 : -1;
+        const sinClamped = Math.sqrt(Math.max(0, 1 - MAX_POLE_COS * MAX_POLE_COS));
+        this.viewDir.copyFrom(this.planeAxis).scaleInPlace(sign * MAX_POLE_COS).addInPlace(tmpPerp.scale(sinClamped));
+        this.viewDir.normalize();
+      }
+    }
   }
 
   update(deltaSeconds: number): void {
@@ -378,17 +417,36 @@ export class OrbitTrackballCamera {
     }
 
     if (this.reorienting && !this.dragging) {
-      // Blend `up` toward the natural horizon-aligned up at the current viewDir. Only runs
-      // while explicitly requested via reorient() - see that method's doc comment.
-      const d = Vector3.Dot(Vector3.Up(), this.viewDir);
-      tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
-      if (tmpIdealUp.lengthSquared() > 1e-6) {
-        tmpIdealUp.normalize();
-        const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
-        Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
-        if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
+      if (this.planeLocked) {
+        // up is already forced level every frame below regardless (see the unconditional
+        // planeLocked block) - see reorient()'s own doc comment for why this mode instead
+        // blends PITCH back toward the equator (viewDir perpendicular to planeAxis).
+        const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
+        tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
+        if (Math.abs(cosFromPole) > 1e-4 && tmpPerp.lengthSquared() > 1e-9) {
+          tmpPerp.normalize();
+          const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
+          const nextCos = cosFromPole * (1 - blend);
+          const nextSin = Math.sqrt(Math.max(0, 1 - nextCos * nextCos));
+          this.viewDir.copyFrom(this.planeAxis).scaleInPlace(nextCos).addInPlace(tmpPerp.scale(nextSin));
+          this.viewDir.normalize();
+          if (Math.abs(nextCos) < 1e-4) this.reorienting = false;
+        } else {
+          this.reorienting = false;
+        }
       } else {
-        this.reorienting = false;
+        // Blend `up` toward the natural horizon-aligned up at the current viewDir - never
+        // changes which point on the planet is centered (see reorient()'s own doc comment).
+        const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+        tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+        if (tmpIdealUp.lengthSquared() > 1e-6) {
+          tmpIdealUp.normalize();
+          const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
+          Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
+          if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
+        } else {
+          this.reorienting = false;
+        }
       }
     }
 
