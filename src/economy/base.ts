@@ -1,5 +1,6 @@
 import { Mesh, MeshBuilder, Scene, Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "../solarSystem/celestialBody";
+import { orbitalScale } from "../solarSystem/orbitalScale";
 import type { Dockable } from "./dockable";
 import type { BaseDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
@@ -15,6 +16,7 @@ import type { ExaminableInfo } from "../ui/examineUI";
  */
 export class Base implements Dockable {
   readonly id: string;
+  readonly kind = "base";
   readonly def: BaseDef;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
@@ -53,8 +55,13 @@ export class Base implements Dockable {
    * plus the fixed, non-rotating approach offset) rather than the Base's literal instantaneous
    * spin-rotated surface position - see approachDirectionInOrbitFrame's own doc comment. */
   predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
-    this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, out);
-    out.addInPlace(this.approachDirectionInOrbitFrame.scale(this.parentBody.radius * 1.5));
+    this.parentBody.predictWorldPositionAt(secondsFromNow, out);
+    // Blended the same way SolarSystem.update's spinNode.scaling ratio grows/shrinks the
+    // parent's rendered size - a fixed gameplay-scale radius here would leave this approach
+    // point anchored to the planet's OLD size once the Actual/Gameplay toggle moves it, drifting
+    // away from (or into) the planet's true current silhouette.
+    const parentRadius = this.parentBody.radius + (this.parentBody.actualRadius - this.parentBody.radius) * orbitalScale.blend;
+    out.addInPlace(this.approachDirectionInOrbitFrame.scale(parentRadius * 1.5));
     return out;
   }
 

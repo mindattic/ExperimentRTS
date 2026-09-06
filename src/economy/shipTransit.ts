@@ -11,17 +11,33 @@ export interface RendezvousResult {
 const tmpPredicted = new Vector3();
 const tmpFromGameplay = new Vector3();
 const tmpToGameplay = new Vector3();
+const tmpFromParent = new Vector3();
+const tmpToParent = new Vector3();
 
 /** Distance between `from`/`to`'s gameplay-equivalent positions (see
  * orbitalScale.gameplayPositionOf) rather than their real, live (possibly Actual-scale-blended)
- * ones - a Base/Station's own local offset from its parent planet is independent of the toggle
- * (Bases sit at a fixed surface point; Stations are explicitly out of scope - see
- * orbitalScale.ts), so only the parent planet's own position needs rescaling. */
-function gameplayEquivalentDistance(from: Dockable, fromPosition: Vector3, to: Dockable, toPosition: Vector3): number {
+ * ones - a Base/Station's own local offset from its parent planet/moon is independent of the
+ * toggle, so only the parent body's own position needs rescaling. `fromPosition`/`toPosition` are
+ * each a PREDICTED position `fromSecondsFromNow`/`toSecondsFromNow` seconds out (see
+ * solveRendezvous - both origin and destination are predicted ahead, never read "live"), so the
+ * parent position subtracted out to isolate each one's own local offset must be predicted at that
+ * SAME future moment too (predictWorldPositionAt, not the parent's current getAbsolutePosition())
+ * - otherwise the parent's own orbital motion between now and then leaks into the "local offset,"
+ * silently growing with leadSeconds/travelSeconds instead of canceling out. */
+function gameplayEquivalentDistance(
+  from: Dockable,
+  fromPosition: Vector3,
+  fromSecondsFromNow: number,
+  to: Dockable,
+  toPosition: Vector3,
+  toSecondsFromNow: number,
+): number {
+  from.parentBody.predictWorldPositionAt(fromSecondsFromNow, tmpFromParent);
   orbitalScale.gameplayPositionOf(from.parentBody, tmpFromGameplay);
-  tmpFromGameplay.addInPlace(fromPosition).subtractInPlace(from.parentBody.orbit.orbitNode.position);
+  tmpFromGameplay.addInPlace(fromPosition).subtractInPlace(tmpFromParent);
+  to.parentBody.predictWorldPositionAt(toSecondsFromNow, tmpToParent);
   orbitalScale.gameplayPositionOf(to.parentBody, tmpToGameplay);
-  tmpToGameplay.addInPlace(toPosition).subtractInPlace(to.parentBody.orbit.orbitNode.position);
+  tmpToGameplay.addInPlace(toPosition).subtractInPlace(tmpToParent);
   return Vector3.Distance(tmpFromGameplay, tmpToGameplay);
 }
 
@@ -62,11 +78,11 @@ export function solveRendezvous(
   iterations = 3,
 ): RendezvousResult {
   destination.predictWorldPositionAt(leadSeconds, tmpPredicted);
-  let travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
+  let travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, leadSeconds, destination, tmpPredicted, leadSeconds)) / cruiseSpeed;
 
   for (let i = 0; i < iterations; i++) {
     destination.predictWorldPositionAt(leadSeconds + travelSeconds, tmpPredicted);
-    travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
+    travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, leadSeconds, destination, tmpPredicted, leadSeconds + travelSeconds)) / cruiseSpeed;
   }
 
   return { arrivalPosition: tmpPredicted.clone(), travelSeconds };

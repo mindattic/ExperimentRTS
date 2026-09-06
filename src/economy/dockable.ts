@@ -6,6 +6,7 @@ import type { CelestialBody } from "../solarSystem/celestialBody";
  * needs to know which concrete kind of stop it's dealing with. */
 export interface Dockable {
   readonly id: string;
+  readonly kind: "base" | "station";
   /** The planet this dockable ultimately orbits (directly for Base/Station today) - used by
    * shipTransit.ts's effectiveCruiseSpeed to keep travel time invariant across the actual/
    * gameplay orbital-scale toggle (see orbitalScale.gameplayPositionOf). */

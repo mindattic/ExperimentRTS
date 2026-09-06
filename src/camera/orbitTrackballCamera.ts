@@ -3,6 +3,7 @@ import { keybindings } from "../input/keybindings";
 import { computeLookRotationToRef } from "./lookRotation";
 import { graphicsSettings } from "../settings/graphicsSettings";
 import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./pathAvoidance";
+import { applyMouselookDelta, MOUSELOOK_SENSITIVITY, requestPointerLockWithRetry } from "./mouselook";
 
 const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
 const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
@@ -32,10 +33,6 @@ const ENTRY_BLEND_SPEED = 3000;
  * away from degenerating to zero. */
 const POLE_CLAMP_DEGREES = 2;
 const MAX_POLE_COS = Math.cos((POLE_CLAMP_DEGREES * Math.PI) / 180);
-/** Radians per pixel of raw (Pointer Lock) mouse movement while right-mouse look-around is
- * held - same value as FreeFlyCamera's own LOOK_SENSITIVITY, for a consistent look-feel between
- * the two cameras' mouselook. */
-const LOOK_SENSITIVITY = 0.0025;
 /** How long releasing right-mouse look-around takes to slerp back to the normal
  * looking-at-the-focused-body orientation. */
 const LOOK_RETURN_SECONDS = 0.4;
@@ -48,10 +45,20 @@ const tmpForward = new Vector3();
 const tmpTargetPos = new Vector3();
 const tmpTargetRot = new Quaternion();
 const tmpPerp = new Vector3();
+const tmpScaledViewDir = new Vector3();
 
 function easeOutCubic(t: number): number {
   const u = 1 - t;
   return 1 - u * u * u;
+}
+
+/** Component of world-up perpendicular to `viewDir` (the "ideal" horizon-level up at that
+ * viewDir), written into `out` - shared by reorient()'s unlocked blend-to-level and the
+ * continuous ambient auto-relevel, both of which recompute this every frame while active. */
+function computeIdealUpToRef(viewDir: Vector3, out: Vector3): void {
+  const d = Vector3.Dot(Vector3.UpReadOnly, viewDir);
+  viewDir.scaleToRef(d, tmpScaledViewDir);
+  out.copyFrom(Vector3.UpReadOnly).subtractInPlace(tmpScaledViewDir);
 }
 
 /**
@@ -177,22 +184,6 @@ export class OrbitTrackballCamera {
     this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
     document.removeEventListener("pointerlockchange", this.pointerLockChangeHandler);
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-  }
-
-  /** Requesting Pointer Lock directly from the right-mouse-button pointerdown handler counts as
-   * the user gesture the API requires, and just works - same retry-on-rejection pattern as
-   * FreeFlyCamera's own requestPointerLockWithRetry. */
-  private requestPointerLockWithRetry(): void {
-    const result = this.canvas.requestPointerLock() as unknown;
-    if (result && typeof (result as Promise<void>).catch === "function") {
-      (result as Promise<void>).catch(() => {
-        const retryOnce = () => {
-          this.canvas.removeEventListener("pointerdown", retryOnce);
-          if (this.freeLooking && document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock();
-        };
-        this.canvas.addEventListener("pointerdown", retryOnce);
-      });
-    }
   }
 
   /** The browser force-exits Pointer Lock on its own in some cases (e.g. the user pressing
@@ -342,7 +333,7 @@ export class OrbitTrackballCamera {
       this.freeLooking = true;
       this.returnBlendStartRot = null; // a fresh look-around always wins over an in-progress return blend
       this.lookAroundRot.copyFrom(this.camera.rotationQuaternion!);
-      if (document.pointerLockElement !== this.canvas) this.requestPointerLockWithRetry();
+      if (document.pointerLockElement !== this.canvas) requestPointerLockWithRetry(this.canvas, () => this.freeLooking);
       return;
     }
     if (e.button !== 0) return;
@@ -357,17 +348,7 @@ export class OrbitTrackballCamera {
 
   private onMouseMove(e: MouseEvent): void {
     if (!this.freeLooking || document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. Escape)
-    const yaw = e.movementX * LOOK_SENSITIVITY;
-    const pitch = e.movementY * LOOK_SENSITIVITY;
-    // Yaw around world up, pitch around the camera's own current right - identical mouselook
-    // math to FreeFlyCamera.onMouseMove, composed directly onto lookAroundRot (this is object-
-    // space orientation, not a view matrix, same reasoning as that method's own comment).
-    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, tmpQuat);
-    this.lookAroundRot.multiplyInPlace(tmpQuat);
-    Matrix.FromQuaternionToRef(this.lookAroundRot, tmpMatrix);
-    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
-    Quaternion.RotationAxisToRef(tmpRight, pitch, tmpQuat);
-    tmpQuat.multiplyToRef(this.lookAroundRot, this.lookAroundRot);
+    applyMouselookDelta(this.lookAroundRot, e.movementX, e.movementY, MOUSELOOK_SENSITIVITY);
   }
 
   private onPointerMove(e: PointerEvent): void {
@@ -456,14 +437,15 @@ export class OrbitTrackballCamera {
         if (tmpPerp.lengthSquared() < 1e-9) {
           // No stable azimuth to preserve (viewDir landed exactly on the pole in one step, e.g.
           // a huge single-frame drag) - any perpendicular direction is as good as any other.
-          tmpPerp.copyFrom(Vector3.Right());
+          tmpPerp.copyFrom(Vector3.RightReadOnly);
           tmpPerp.subtractInPlace(this.planeAxis.scale(Vector3.Dot(tmpPerp, this.planeAxis)));
-          if (tmpPerp.lengthSquared() < 1e-9) tmpPerp.copyFrom(Vector3.Forward());
+          if (tmpPerp.lengthSquared() < 1e-9) tmpPerp.copyFrom(Vector3.LeftHandedForwardReadOnly);
         }
         tmpPerp.normalize();
         const sign = cosFromPole >= 0 ? 1 : -1;
         const sinClamped = Math.sqrt(Math.max(0, 1 - MAX_POLE_COS * MAX_POLE_COS));
-        this.viewDir.copyFrom(this.planeAxis).scaleInPlace(sign * MAX_POLE_COS).addInPlace(tmpPerp.scale(sinClamped));
+        tmpPerp.scaleInPlace(sinClamped); // safe: tmpPerp isn't read again after this line
+        this.viewDir.copyFrom(this.planeAxis).scaleInPlace(sign * MAX_POLE_COS).addInPlace(tmpPerp);
         this.viewDir.normalize();
       }
     }
@@ -539,8 +521,7 @@ export class OrbitTrackballCamera {
         } else {
           // Blend `up` toward the natural horizon-aligned up at the current viewDir - never
           // changes which point on the planet is centered (see reorient()'s own doc comment).
-          const d = Vector3.Dot(Vector3.Up(), this.viewDir);
-          tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+          computeIdealUpToRef(this.viewDir, tmpIdealUp);
           if (tmpIdealUp.lengthSquared() > 1e-6) {
             tmpIdealUp.normalize();
             const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
@@ -557,8 +538,7 @@ export class OrbitTrackballCamera {
       // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
       // already forces `up` to a fixed formula every frame just below, making this redundant).
       if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
-        const d = Vector3.Dot(Vector3.Up(), this.viewDir);
-        tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+        computeIdealUpToRef(this.viewDir, tmpIdealUp);
         if (tmpIdealUp.lengthSquared() > 1e-6) {
           tmpIdealUp.normalize();
           if (graphicsSettings.reorientationStrength >= 1) {
@@ -576,8 +556,9 @@ export class OrbitTrackballCamera {
         // rather than letting it free-tumble like the unlocked mode does - this is what makes
         // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
         const d = Vector3.Dot(this.planeAxis, this.viewDir);
-        this.up.copyFrom(this.planeAxis).subtractInPlace(this.viewDir.scale(d));
-        if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.Right());
+        this.viewDir.scaleToRef(d, tmpScaledViewDir);
+        this.up.copyFrom(this.planeAxis).subtractInPlace(tmpScaledViewDir);
+        if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.RightReadOnly);
         this.up.normalize();
       }
 
@@ -585,6 +566,7 @@ export class OrbitTrackballCamera {
       const upDotView = Vector3.Dot(this.up, this.viewDir);
       this.up.subtractInPlace(this.viewDir.scale(upDotView));
       this.up.normalize();
+
     }
 
     if (this.targetRadius !== null) {

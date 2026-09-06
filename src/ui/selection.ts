@@ -5,8 +5,12 @@ import type { FreeFlyCamera } from "../camera/freeFlyCamera";
 import type { EconomyManager } from "../economy/economyManager";
 import type { Base } from "../economy/base";
 import type { Station } from "../economy/station";
+import { BODY_DEFS, actualSceneDistance } from "../solarSystem/scale";
 
-const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body's orbit
+// Same "farthest body's Actual-scale distance, with margin" formula as main.ts's FAR_CLIP, so the
+// reticle ray always reaches every body even once Actual scale mode pushes Pluto/Eris out past a
+// fixed 1,000,000-unit ray length.
+const FREE_CAM_PICK_DISTANCE = Math.max(...BODY_DEFS.map((b) => actualSceneDistance(b.auDistance))) * 1.4;
 
 const CLICK_MOVE_THRESHOLD_PX = 6;
 const MIN_RETICLE_SIZE = 24;
@@ -149,20 +153,11 @@ export class SelectionUI {
     return { x: clientX - rect.left, y: clientY - rect.top };
   }
 
-  /** A dockable's kind, for SelectedEntity.kind - structural check rather than importing Base/
-   * Station as values just for an instanceof, since Dockable already carries everything else
-   * this needs (id, parentBody, predictWorldPositionAt). Stations are the only Dockable with an
-   * `orbitRadiusInParentRadii`-shaped def field (see StationDef); Base's def has no equivalent. */
-  private dockableKind(dockable: Base | Station): "base" | "station" {
-    return "orbitRadiusInParentRadii" in dockable.def ? "station" : "base";
-  }
-
   private buildDockableNode(dockable: Base | Station): BreadcrumbNode {
-    const kind = this.dockableKind(dockable);
     return {
       label: dockable.def.name,
       select: () =>
-        this.setSelectedEntity({ kind, name: dockable.def.name, getWorldPosition: () => dockable.mesh.getAbsolutePosition() }),
+        this.setSelectedEntity({ kind: dockable.kind, name: dockable.def.name, getWorldPosition: () => dockable.mesh.getAbsolutePosition() }),
       children: () => [],
     };
   }

@@ -6,6 +6,25 @@ const ORBIT_LINE_SEGMENTS = 128;
  * visually exact for these near-circular orbits (eccentricity capped at 0.02 system-wide). */
 const ORBIT_SAMPLE_COUNT = 720;
 
+/** A plain unlit StandardMaterial for a LinesMesh (an orbit line, a ship trajectory, ...) - its
+ * own default shader material has no logarithmic-depth support and (without useVertexAlpha,
+ * never passed here) never actually enables GL alpha blending regardless of .alpha, so at this
+ * scene's huge near/far ratio a line would render fully opaque despite an intended transparency
+ * and draw in front of/behind planets in the wrong order (every planet/terrain material uses
+ * useLogarithmicDepth - see celestialBody.ts/planetTerrain.ts - so a linear-depth line can't be
+ * compared against them consistently). This gets both right for free. */
+export function createUnlitLineMaterial(scene: Scene, name: string, color: Color3, alpha: number): StandardMaterial {
+  const material = new StandardMaterial(name, scene);
+  material.emissiveColor = color;
+  material.diffuseColor = Color3.Black();
+  material.specularColor = Color3.Black();
+  material.disableLighting = true;
+  material.alpha = alpha;
+  material.useLogarithmicDepth = true;
+  material.backFaceCulling = false;
+  return material;
+}
+
 export interface CelestialOrbitOptions {
   name: string;
   semiMajorAxis: number;
@@ -134,22 +153,7 @@ export class CelestialOrbit {
       points.push(this.positionAt((i / ORBIT_LINE_SEGMENTS) * Math.PI * 2));
     }
     const line = MeshBuilder.CreateLines(name, { points }, scene);
-    // LinesMesh's own default shader material has no logarithmic-depth support and (without
-    // useVertexAlpha, never passed here) never actually enables GL alpha blending regardless of
-    // .alpha - at this scene's huge near/far ratio that meant orbit lines rendered fully opaque
-    // despite the "80% transparent" intent, and drew in front of/behind planets in the wrong
-    // order (every planet/terrain material uses useLogarithmicDepth - see
-    // celestialBody.ts/planetTerrain.ts - so a linear-depth line can't be compared against them
-    // consistently). A plain unlit StandardMaterial gets both right for free.
-    const material = new StandardMaterial(`${name}Material`, scene);
-    material.emissiveColor = color;
-    material.diffuseColor = Color3.Black();
-    material.specularColor = Color3.Black();
-    material.disableLighting = true;
-    material.alpha = 0.2; // 80% transparent
-    material.useLogarithmicDepth = true;
-    material.backFaceCulling = false;
-    line.material = material;
+    line.material = createUnlitLineMaterial(scene, `${name}Material`, color, 0.2); // 80% transparent
     line.isPickable = false;
     line.parent = parentNode;
     return line;

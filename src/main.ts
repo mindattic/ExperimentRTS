@@ -22,6 +22,7 @@ import { SolarSystem } from "./solarSystem/solarSystem";
 import { BODY_DEFS, actualSceneDistance, COLOR_MAP_SOURCES, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
 import { orbitalScale } from "./solarSystem/orbitalScale";
 import { loadColorImage, loadHeightmapImage, type ColorImageData, type HeightmapImageData } from "./terrain/heightmapImage";
+import { easeInOutCubic } from "./terrain/mathUtils";
 import { StellarDust } from "./environment/stellarDust";
 import { SelectionUI, type SelectedEntity } from "./ui/selection";
 import { SelectionAreaUI } from "./ui/selectionArea";
@@ -100,10 +101,6 @@ const ENTITY_ORBIT_MIN_RADIUS = 30;
 const ENTITY_ORBIT_MAX_RADIUS = 400;
 const ENTITY_ORBIT_DEFAULT_RADIUS = 120;
 
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
-
 /** Loads every body's real heightmap (see scale.ts's HEIGHTMAP_SOURCES) up front, resampled to
  * its size-proportional target resolution, before the solar system is built - CelestialBody
  * needs the fully-decoded image synchronously at construction time (PlanetHeightfield.elevationAt
@@ -175,8 +172,10 @@ async function main() {
   // side is always at least dimly visible.
   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
 
-  const heightmapImages = await preloadHeightmaps(engine.getCaps().maxTextureSize);
-  const colorImages = await preloadColorMaps(engine.getCaps().maxTextureSize);
+  const [heightmapImages, colorImages] = await Promise.all([
+    preloadHeightmaps(engine.getCaps().maxTextureSize),
+    preloadColorMaps(engine.getCaps().maxTextureSize),
+  ]);
   const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages, colorImages);
   let focused = solarSystem.focused;
   let thresholds = radiusThresholds(focused.radius);

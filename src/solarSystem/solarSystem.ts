@@ -32,12 +32,18 @@ export class SolarSystem {
   readonly bodies: CelestialBody[];
   readonly belt: AsteroidBelt;
   focusedIndex: number;
-  private readonly orbitLineMeshes: LinesMesh[] = [];
-  /** Parallel to orbitLineMeshes - the CelestialOrbit each line was drawn from, and the
-   * gameplay-scale semi-major axis it was drawn AT (a fixed one-time mesh, never rebuilt) - so
-   * SolarSystem.update can keep it visually attached to its body by applying a uniform
-   * mesh.scaling = currentSMA/gameplaySMA every frame instead of regenerating geometry. */
-  private readonly orbitLines: { mesh: LinesMesh; gameplaySemiMajorAxis: number; getCurrentSemiMajorAxis: () => number }[] = [];
+  /** The CelestialOrbit each line was drawn from, and the gameplay-scale semi-major axis it was
+   * drawn AT (a fixed one-time mesh, never rebuilt) - so SolarSystem.update can keep it visually
+   * attached to its body by applying a uniform mesh.scaling = currentSMA/gameplaySMA every frame
+   * instead of regenerating geometry. currentRatio tracks the last-applied scale so update() can
+   * skip the (Babylon-dirtying) write when nothing's actually changed, the same way
+   * AsteroidBelt.setRadii already no-ops when unchanged. */
+  private readonly orbitLines: {
+    mesh: LinesMesh;
+    gameplaySemiMajorAxis: number;
+    getCurrentSemiMajorAxis: () => number;
+    currentRatio: number;
+  }[] = [];
   /** Belt inner/outer are re-derived every frame from Mars/Jupiter's own LIVE (possibly
    * orbitalScale-blended) semi-major axis - same 1.3x/0.8x factors used to compute them once at
    * construction below, just re-evaluated continuously so the belt stretches/compresses along
@@ -45,6 +51,12 @@ export class SolarSystem {
    * own comment for why a uniform mesh-scale trick isn't used here, unlike orbit lines). */
   private readonly beltMars: CelestialBody;
   private readonly beltJupiter: CelestialBody;
+  private currentStarRadius = STAR_RADIUS;
+  /** Last blend value the size pass below applied - lets it skip re-writing every body's
+   * spinNode.scaling when blend hasn't moved (most frames, once a transition finishes), same
+   * no-op-guard idea as the orbit-line scaling loop just above it. Sentinel -1 so the very first
+   * update() always applies (blend's real range is 0..1). */
+  private currentSizeBlend = -1;
 
   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
    * as close to "fixed at infinity" as the clipping range allows.
@@ -90,14 +102,15 @@ export class SolarSystem {
           spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
           startAngle: (index / starOrbitingDefs.length) * Math.PI * 2 + rand() * 0.5,
         },
-        heightmapImages[def.name],
-        actualSceneDistance(def.auDistance),
-        colorImages[def.name],
-        COLOR_MAP_SOURCES[def.name]?.url,
+        {
+          heightmapImage: heightmapImages[def.name],
+          actualSemiMajorAxis: actualSceneDistance(def.auDistance),
+          colorImage: colorImages[def.name],
+          gasGiantColorTextureUrl: COLOR_MAP_SOURCES[def.name]?.url,
+        },
       );
       const line = body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
-      this.orbitLineMeshes.push(line);
-      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => body.orbit.semiMajorAxis });
+      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => body.orbit.semiMajorAxis, currentRatio: 1 });
       return body;
     });
 
@@ -105,8 +118,13 @@ export class SolarSystem {
       const parent = this.bodies.find((b) => b.def.name === def.orbitsAround);
       if (!parent) continue; // BODY_DEFS is static and self-consistent - shouldn't happen
       const gameplaySemiMajorAxis = parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6);
+      // parent.actualRadius (the parent's TRUE real-world radius), not parent.radius (its
+      // compressed gameplay radius) - moonOrbitRadiusInParentRadiiActual is a real-world ratio
+      // (real distance / real parent radius), so it must be anchored on the parent's own real
+      // radius to land on the same genuinely-1:1 scale actualSceneDistance() uses for planets
+      // (see EARTH_RADIUS_ACTUAL's comment in scale.ts for why the gameplay radius was wrong here).
       const actualSemiMajorAxis = def.moonOrbitRadiusInParentRadiiActual
-        ? parent.radius * def.moonOrbitRadiusInParentRadiiActual
+        ? parent.actualRadius * def.moonOrbitRadiusInParentRadiiActual
         : gameplaySemiMajorAxis;
       const moon = new CelestialBody(
         scene,
@@ -121,14 +139,16 @@ export class SolarSystem {
           spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
           startAngle: rand() * Math.PI * 2,
         },
-        heightmapImages[def.name],
-        actualSemiMajorAxis,
-        colorImages[def.name],
+        {
+          heightmapImage: heightmapImages[def.name],
+          actualSemiMajorAxis,
+          colorImage: colorImages[def.name],
+        },
       );
       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
+      moon.parentBody = parent;
       const line = moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);
-      this.orbitLineMeshes.push(line);
-      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => moon.orbit.semiMajorAxis });
+      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => moon.orbit.semiMajorAxis, currentRatio: 1 });
       this.bodies.push(moon);
     }
 
@@ -148,7 +168,7 @@ export class SolarSystem {
   }
 
   setOrbitLinesVisible(visible: boolean): void {
-    for (const line of this.orbitLineMeshes) line.setEnabled(visible);
+    for (const line of this.orbitLines) line.mesh.setEnabled(visible);
   }
 
   /**
@@ -181,15 +201,41 @@ export class SolarSystem {
     }
     // Orbit-line meshes are drawn once at gameplay scale and never rebuilt (see
     // CelestialOrbit.createOrbitLine) - a uniform mesh scale keeps each one visually attached to
-    // its body's current (possibly blended) distance instead of the geometry going stale.
+    // its body's current (possibly blended) distance instead of the geometry going stale. Skipped
+    // when the ratio hasn't actually moved (most bodies, most frames) - same no-op guard as
+    // AsteroidBelt.setRadii, since writing .scaling unconditionally would dirty the TransformNode
+    // and force a world-matrix recompute every frame for lines that never move.
     for (const line of this.orbitLines) {
-      line.mesh.scaling.setAll(line.getCurrentSemiMajorAxis() / line.gameplaySemiMajorAxis);
+      const ratio = line.getCurrentSemiMajorAxis() / line.gameplaySemiMajorAxis;
+      if (ratio === line.currentRatio) continue;
+      line.currentRatio = ratio;
+      line.mesh.scaling.setAll(ratio);
     }
     this.belt.setRadii(this.beltMars.orbit.semiMajorAxis * 1.3, this.beltJupiter.orbit.semiMajorAxis * 0.8);
     this.belt.update(deltaSeconds);
+    // Blends each body's RENDERED SIZE toward its real diameter ratio via a uniform
+    // spinNode.scaling factor, not by touching `radius` or regenerating terrain geometry -
+    // spinNode is the parent of the terrain patches, the gas-giant mesh+ring, Base's fixed
+    // surface offset, AND (whenever this body is focused) the orbit/ground camera itself, so
+    // scaling it uniformly grows/shrinks the visible planet in world space for free while
+    // leaving every LOCAL (body-radii-relative) distance - camera thresholds, terrain LOD's own
+    // distance math, Base's surface anchor - completely unaffected (see the plan notes for why
+    // this is safe). `blend` is shared by every body, so this whole pass is skipped (not just
+    // per-body, like the orbit-line loop above) whenever it hasn't moved since last frame.
+    if (blend !== this.currentSizeBlend) {
+      this.currentSizeBlend = blend;
+      for (const body of this.bodies) {
+        const ratio = 1 + (body.actualRadius / body.radius - 1) * blend;
+        body.orbit.spinNode.scaling.setAll(ratio);
+      }
+    }
     // Blends the same way every body's own distance does - see STAR_RADIUS_ACTUAL's own comment
     // on why this genuinely shrinks (not grows) at full Actual scale.
-    this.star.setRadius(STAR_RADIUS + (STAR_RADIUS_ACTUAL - STAR_RADIUS) * blend);
+    const starRadius = STAR_RADIUS + (STAR_RADIUS_ACTUAL - STAR_RADIUS) * blend;
+    if (starRadius !== this.currentStarRadius) {
+      this.currentStarRadius = starRadius;
+      this.star.setRadius(starRadius);
+    }
 
     this.focused.terrain?.update(focusedCameraLocalPosition);
 

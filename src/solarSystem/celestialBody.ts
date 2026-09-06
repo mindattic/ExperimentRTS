@@ -3,8 +3,10 @@ import { PlanetTerrain } from "../terrain/planetTerrain";
 import { PlanetHeightfield } from "../terrain/heightfield";
 import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
 import { CelestialOrbit, type CelestialOrbitOptions } from "./celestialOrbit";
-import { bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
+import { actualBodyRadius, bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
 import { mulberry32 } from "../terrain/prng";
+
+const tmpParentPosition = new Vector3();
 
 const GAS_GIANT_PALETTES: Record<string, [Color3, Color3]> = {
   Jupiter: [new Color3(0.55, 0.42, 0.3), new Color3(0.82, 0.68, 0.52)],
@@ -80,6 +82,33 @@ function createRingMesh(scene: Scene, name: string, innerRadius: number, outerRa
   return mesh;
 }
 
+/** Optional per-body extras for CelestialBody's constructor - grouped into one object since most
+ * of these are omitted for most bodies (gas giants never take heightmapImage/colorImage, most
+ * dwarf planets/moons have no actualSemiMajorAxis yet, etc.), and positional optional params here
+ * were easy to mis-order at call sites. */
+export interface CelestialBodyOptions {
+  /** A real elevation map preloaded for this body (see heightmapImage.ts and main.ts's preload
+   * step) - only meaningful for landable bodies; switches PlanetHeightfield to sample it instead
+   * of procedural noise. Omit to keep procedural terrain (Pluto/Eris, or if a real map failed to
+   * load). */
+  heightmapImage?: HeightmapImageData;
+  /** The real-world-proportional distance this body's orbit blends toward in "actual" scale mode
+   * - omit for bodies not in the toggle's scope (e.g. dwarf planets/moons with no accurate
+   * real-distance figure entered yet). */
+  actualSemiMajorAxis?: number;
+  /** A real color/diffuse map preloaded for this body (see COLOR_MAP_SOURCES in scale.ts) - only
+   * meaningful for landable bodies; switches PlanetHeightfield's per-vertex terrain color to
+   * sample it instead of the elevation-grayscale fallback. Omit to keep that fallback (Venus/
+   * Pluto/Eris, or if a real map failed to load - see public/textures/SOURCES.md for why those
+   * specifically have none). */
+  colorImage?: ColorImageData;
+  /** A real cloud-band color texture URL for a gas giant (see COLOR_MAP_SOURCES) - loaded
+   * directly as a Babylon Texture (no CPU-side decoding needed, unlike colorImage, since a gas
+   * giant's sphere just needs a GPU diffuse texture, not per-vertex terrain sampling). Omit to
+   * keep the procedural band generator. */
+  gasGiantColorTextureUrl?: string;
+}
+
 /**
  * One body in the system: either a landable rocky/dwarf planet (full cube-sphere quadtree
  * terrain, reusing PlanetTerrain as-is) or a flyby-only gas giant (a cheap textured sphere,
@@ -92,6 +121,13 @@ export class CelestialBody {
   readonly terrain: PlanetTerrain | null;
   readonly mesh: Mesh | null;
   readonly radius: number;
+  /** The real-world-proportional radius this body's rendered SIZE blends toward in "actual"
+   * scale mode (see orbitalScale.ts/scale.ts's actualBodyRadius) - always defined (every BodyDef
+   * has a realDiameterRatio), unlike actualSemiMajorAxis's opt-in default-to-gameplay pattern,
+   * since real diameter data exists for every body. Applied by SolarSystem.update() as a uniform
+   * orbit.spinNode.scaling factor, not by touching `radius` itself or regenerating terrain - see
+   * that method's own comment for why. */
+  readonly actualRadius: number;
   /** The semi-major axis this body was constructed with (always the compressed "gameplay"
    * distance - construction always happens before any actual/gameplay blend ever moves). */
   readonly gameplaySemiMajorAxis: number;
@@ -100,37 +136,20 @@ export class CelestialBody {
    * bodies the toggle doesn't apply to, so SolarSystem.update can blend every body uniformly
    * without needing to special-case which ones are in scope. */
   readonly actualSemiMajorAxis: number;
+  /** Set by SolarSystem right after construction for a moon (the planet it orbits - see
+   * BodyDef.orbitsAround) - null for every star-orbiting body. Needed because `orbit`'s own
+   * ellipse math only ever knows its own focus (see CelestialOrbit's class doc comment); a
+   * moon's orbitNode is reparented onto its planet's orbitNode for the CURRENT-frame transform,
+   * but a future-time prediction (predictWorldPositionAt) has no scene graph to walk, so it
+   * composes with this reference explicitly instead. */
+  parentBody: CelestialBody | null = null;
 
-  /**
-   * @param heightmapImage A real elevation map preloaded for this body (see heightmapImage.ts
-   * and main.ts's preload step) - only meaningful for landable bodies; switches
-   * PlanetHeightfield to sample it instead of procedural noise. Omit to keep procedural
-   * terrain (Pluto/Eris, or if a real map failed to load).
-   * @param actualSemiMajorAxis The real-world-proportional distance this body's orbit blends
-   * toward in "actual" scale mode - omit for bodies not in the toggle's scope (e.g. dwarf
-   * planets/moons with no accurate real-distance figure entered yet).
-   * @param colorImage A real color/diffuse map preloaded for this body (see COLOR_MAP_SOURCES
-   * in scale.ts) - only meaningful for landable bodies; switches PlanetHeightfield's per-vertex
-   * terrain color to sample it instead of the elevation-grayscale fallback. Omit to keep that
-   * fallback (Venus/Pluto/Eris, or if a real map failed to load - see
-   * public/textures/SOURCES.md for why those specifically have none).
-   * @param gasGiantColorTextureUrl A real cloud-band color texture URL for a gas giant (see
-   * COLOR_MAP_SOURCES) - loaded directly as a Babylon Texture (no CPU-side decoding needed,
-   * unlike colorImage, since a gas giant's sphere just needs a GPU diffuse texture, not
-   * per-vertex terrain sampling). Omit to keep the procedural band generator.
-   */
-  constructor(
-    scene: Scene,
-    def: BodyDef,
-    orbitOptions: CelestialOrbitOptions,
-    heightmapImage?: HeightmapImageData,
-    actualSemiMajorAxis?: number,
-    colorImage?: ColorImageData,
-    gasGiantColorTextureUrl?: string,
-  ) {
+  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, options: CelestialBodyOptions = {}) {
+    const { heightmapImage, actualSemiMajorAxis, colorImage, gasGiantColorTextureUrl } = options;
     this.def = def;
     this.orbit = new CelestialOrbit(scene, orbitOptions);
     this.radius = bodyRadius(def);
+    this.actualRadius = actualBodyRadius(def);
     this.landable = def.kind !== "gasGiant";
     this.gameplaySemiMajorAxis = orbitOptions.semiMajorAxis;
     this.actualSemiMajorAxis = actualSemiMajorAxis ?? orbitOptions.semiMajorAxis;
@@ -173,5 +192,18 @@ export class CelestialBody {
 
   get heightfield(): PlanetHeightfield | null {
     return this.terrain?.heightfield ?? null;
+  }
+
+  /** World-space position this body's orbit focus will occupy `secondsFromNow` from now -
+   * composes with `parentBody` (set for a moon) the same way Station.predictWorldPositionAt
+   * already composes a station with its own parent planet, since CelestialOrbit.
+   * predictLocalPositionAt only ever knows about its own ellipse. */
+  predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
+    this.orbit.predictLocalPositionAt(secondsFromNow, out);
+    if (this.parentBody) {
+      this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, tmpParentPosition);
+      out.addInPlace(tmpParentPosition);
+    }
+    return out;
   }
 }

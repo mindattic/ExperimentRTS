@@ -1,0 +1,3316 @@
+diff --git a/.gitignore b/.gitignore
+index a547bf3..3256acb 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -22,3 +22,6 @@ dist-ssr
+ *.njsproj
+ *.sln
+ *.sw?
++
++# Quicksave transcript (ephemeral, one-shot - see .claude/commands/quicksave.md)
++.claude/quicksave.md
+diff --git a/index.html b/index.html
+index 5ecb923..de9b508 100644
+--- a/index.html
++++ b/index.html
+@@ -72,7 +72,7 @@
+     </div>
+ 
+     <div id="focusList" class="focus-list" hidden>
+-      <div class="focus-list-title">Focus</div>
++      <div id="focusListTitle" class="focus-list-title"></div>
+       <ol id="focusListItems"></ol>
+     </div>
+     <div id="reticle" class="reticle" hidden>
+@@ -88,9 +88,11 @@
+     </div>
+     <div id="freeCamBadge" class="free-cam-badge" hidden>FREE CAM</div>
+     <div id="planeLockBadge" class="plane-lock-badge" hidden>PLANE LOCKED</div>
++    <div id="orbitalScaleBadge" class="orbital-scale-badge" hidden>ACTUAL SCALE</div>
+     <div id="orbitFocusLabel" class="orbit-focus-label" hidden></div>
+     <div id="hoverLabel" class="hover-label" hidden></div>
+     <div id="bodyIconsLayer" class="body-icons-layer"></div>
++    <div id="offscreenIndicatorLayer" class="offscreen-indicator-layer"></div>
+     <div id="devStats" class="dev-stats" hidden></div>
+     <div id="examineLayer" class="examine-layer"></div>
+     <script type="module" src="/src/main.ts"></script>
+diff --git a/public/heightmaps/SOURCES.md b/public/heightmaps/SOURCES.md
+new file mode 100644
+index 0000000..554147a
+--- /dev/null
++++ b/public/heightmaps/SOURCES.md
+@@ -0,0 +1,20 @@
++# Heightmap (elevation) sources
++
++All files are grayscale equirectangular (2:1) images where brightness encodes elevation -
++see `src/terrain/heightmapImage.ts`/`heightfield.ts` for how they're sampled. All entries
++below are public domain (US government work, NASA/USGS).
++
++| File | Source | Mission/instrument |
++|---|---|---|
++| `mercury_source.jpg` | USGS Astrogeology Astropedia | MESSENGER MDIS |
++| `venus_source.jpg` | USGS Astrogeology Astropedia | Magellan SAR (radar) - polar regions have real data gaps, softened via `HeightmapSource.minSample` in `scale.ts` rather than reading as a fake bottomless canyon |
++| `earth_source.png` | USGS Astrogeology Astropedia | SRTM/GTOPO-derived |
++| `moon_source.jpg` | USGS Astrogeology Astropedia | LRO LOLA |
++| `mars_source.jpg` | USGS Astrogeology Astropedia | MGS MOLA |
++| `pluto_source.jpg` | [USGS Astrogeology Astropedia](https://astrogeology.usgs.gov/search/map/pluto_new_horizons_lorri_mvic_global_dem_300m) | New Horizons LORRI/MVIC (July 2017 global DEM release) - covers the encounter hemisphere in high detail; the unseen far side is filled from lower-confidence approach-distance data, same "best available" spirit as every other body here |
++
++**Eris** has no real elevation data of any kind - it has never been resolved as more than a
++point of light by any telescope or spacecraft - and stays on `PlanetHeightfield`'s procedural
++fallback permanently, not as a gap to fill later.
++
++See `public/textures/SOURCES.md` for the parallel color-texture catalog.
+diff --git a/public/heightmaps/pluto_source.jpg b/public/heightmaps/pluto_source.jpg
+new file mode 100644
+index 0000000..e0bcc67
+Binary files /dev/null and b/public/heightmaps/pluto_source.jpg differ
+diff --git a/public/textures/SOURCES.md b/public/textures/SOURCES.md
+new file mode 100644
+index 0000000..f735c58
+--- /dev/null
++++ b/public/textures/SOURCES.md
+@@ -0,0 +1,31 @@
++# Color texture sources
++
++All files are equirectangular (2:1) diffuse/color images - see `heightmapImage.ts`'s
++`loadColorImage` and `heightfield.ts`'s `colorAt`/`useColorImage` for how they're sampled
++(same lat/lon convention as the elevation maps in `public/heightmaps/`, so color and
++elevation always stay aligned).
++
++| File | Source | License | Notes |
++|---|---|---|---|
++| `mercury_color.jpg` | [USGS Astrogeology Astropedia](https://astrogeology.usgs.gov/search/map/mercury_messenger_mdis_global_color_mosaic_665m) | Public domain (NASA/USGS) | MESSENGER MDIS *Global Color Mosaic* - deliberately not the "Enhanced Color" product, which exaggerates mineral differences and isn't natural-looking |
++| `earth_color.jpg` | [NASA Visible Earth - Blue Marble](https://visibleearth.nasa.gov/images/74117) | Public domain (NASA) | MODIS/Terra composite, resized down from the original 5400x2700 release |
++| `mars_color.jpg` | [USGS Astrogeology Astropedia](https://astrogeology.usgs.gov/search/map/mars_viking_global_color_mosaic_925m) | Public domain (NASA/USGS) | Viking Orbiter red/violet-filter global color mosaic |
++| `jupiter_color.jpg` | [NASA SVS - "Hubble Maps Jupiter in 4K"](https://svs.gsfc.nasa.gov/12021/) | Public domain (NASA) | Real Hubble-derived global map, genuinely equirectangular/wrap-ready |
++| `saturn_color.jpg`, `uranus_color.jpg`, `neptune_color.jpg` | [Solar System Scope](https://www.solarsystemscope.com/textures/) (via Wikimedia Commons mirrors) | CC BY 4.0 (attribution required) | **Stylized, not raw photographic data.** Cassini/Voyager 2 imagery exists for these bodies but no genuine cartographic *global equirectangular* map was locatable for this pass - gas giants have no fixed rotating surface to project onto the way solid bodies do, and Uranus/Neptune were only ever visited by a single brief 1980s flyby. Solar System Scope's own site discloses gaps are "filled with fictional terrain that corresponds with the rest of the landscape." Attribute as: "Textures by Solar System Scope (solarsystemscope.com/textures), CC BY 4.0." |
++
++## Deliberately not added this pass
++
++- **Venus color**: no true-color photograph of Venus's surface exists at all - its clouds
++  are opaque to visible light, and Magellan's radar imagery is inherently false-color (colored
++  by elevation, not real surface appearance). Faking a "real" color texture here would be
++  actively dishonest, so Venus keeps its existing procedural, elevation-driven coloring.
++- **Moon color**: every multi-band Clementine/LROC product locatable this pass was either a
++  single-band grayscale mosaic (no color at all) or a mineral-ratio false-color composite
++  (bands assigned to RGB channels by ratio, not natural appearance) - not the subtle,
++  naturalistic tint the Moon actually has. Stays procedural rather than shipping a
++  mislabeled false-color map.
++- **Pluto color**: New Horizons' full global *color* coverage (as opposed to the panchromatic
++  LORRI/MVIC mosaic used for `pluto_source.jpg`) only exists for part of the encounter
++  hemisphere - no clean single "global color mosaic" product was locatable this pass. Stays
++  procedural; worth revisiting if USGS publishes one later.
++- **Eris**: no data of any kind exists - stays fully procedural, permanently (not a gap).
+diff --git a/public/textures/earth_color.jpg b/public/textures/earth_color.jpg
+new file mode 100644
+index 0000000..587f9b6
+Binary files /dev/null and b/public/textures/earth_color.jpg differ
+diff --git a/public/textures/jupiter_color.jpg b/public/textures/jupiter_color.jpg
+new file mode 100644
+index 0000000..3a406b0
+Binary files /dev/null and b/public/textures/jupiter_color.jpg differ
+diff --git a/public/textures/mars_color.jpg b/public/textures/mars_color.jpg
+new file mode 100644
+index 0000000..f945a5e
+Binary files /dev/null and b/public/textures/mars_color.jpg differ
+diff --git a/public/textures/mercury_color.jpg b/public/textures/mercury_color.jpg
+new file mode 100644
+index 0000000..bcfb7c2
+Binary files /dev/null and b/public/textures/mercury_color.jpg differ
+diff --git a/public/textures/neptune_color.jpg b/public/textures/neptune_color.jpg
+new file mode 100644
+index 0000000..30e7ac5
+Binary files /dev/null and b/public/textures/neptune_color.jpg differ
+diff --git a/public/textures/saturn_color.jpg b/public/textures/saturn_color.jpg
+new file mode 100644
+index 0000000..d8b23df
+Binary files /dev/null and b/public/textures/saturn_color.jpg differ
+diff --git a/public/textures/uranus_color.jpg b/public/textures/uranus_color.jpg
+new file mode 100644
+index 0000000..d0abf4c
+Binary files /dev/null and b/public/textures/uranus_color.jpg differ
+diff --git a/src/camera/freeFlyCamera.ts b/src/camera/freeFlyCamera.ts
+index 59cd68d..924f154 100644
+--- a/src/camera/freeFlyCamera.ts
++++ b/src/camera/freeFlyCamera.ts
+@@ -1,10 +1,10 @@
+ import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
+ import { keybindings } from "../input/keybindings";
+ import { computeLookRotationToRef } from "./lookRotation";
++import { applyMouselookDelta, MOUSELOOK_SENSITIVITY, requestPointerLockWithRetry } from "./mouselook";
+ 
+ const MOVE_SPEED = 2400; // units/sec - fast enough to cross interplanetary distances in a reasonable time
+ const RUN_MULTIPLIER = 4; // holding Shift
+-const LOOK_SENSITIVITY = 0.0025; // radians per pixel of raw mouse movement
+ /** Exponential blend rate for reorient() - same idea as OrbitTrackballCamera's RELEVEL_RATE. */
+ const REORIENT_RATE = 4.0;
+ 
+@@ -12,7 +12,6 @@ const tmpForward = new Vector3();
+ const tmpRight = new Vector3();
+ const tmpUp = new Vector3();
+ const tmpMove = new Vector3();
+-const tmpQuat = new Quaternion();
+ const tmpMatrix = new Matrix();
+ 
+ /**
+@@ -68,23 +67,6 @@ export class FreeFlyCamera {
+     document.addEventListener("pointerlockchange", this.pointerLockChangeHandler);
+   }
+ 
+-  /** Requesting Pointer Lock directly from the right-mouse-button pointerdown handler counts as
+-   * the user gesture the API requires, and just works. Falls back to retrying on the next
+-   * pointerdown if that specific request happens to reject (e.g. a rapid up/down flick racing a
+-   * still-pending previous request). */
+-  private requestPointerLockWithRetry(): void {
+-    const result = this.canvas.requestPointerLock() as unknown;
+-    if (result && typeof (result as Promise<void>).catch === "function") {
+-      (result as Promise<void>).catch(() => {
+-        const retryOnce = () => {
+-          this.canvas.removeEventListener("pointerdown", retryOnce);
+-          if (!this.cursorModeActive && document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock();
+-        };
+-        this.canvas.addEventListener("pointerdown", retryOnce);
+-      });
+-    }
+-  }
+-
+   detach(): void {
+     this.keys.clear();
+     window.removeEventListener("mousemove", this.mouseMoveHandler);
+@@ -123,7 +105,7 @@ export class FreeFlyCamera {
+     if (active) {
+       if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+     } else if (document.pointerLockElement !== this.canvas) {
+-      this.requestPointerLockWithRetry();
++      requestPointerLockWithRetry(this.canvas, () => !this.cursorModeActive);
+     }
+   }
+ 
+@@ -138,30 +120,18 @@ export class FreeFlyCamera {
+    * camera's programmatic moves in this codebase) rather than snapping. */
+   reorient(): void {
+     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
+-    Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
++    Vector3.TransformNormalToRef(Vector3.LeftHandedForwardReadOnly, tmpMatrix, tmpForward);
+     tmpForward.y = 0;
+     if (tmpForward.lengthSquared() < 1e-6) return; // looking almost straight up/down - no well-defined heading to level to
+     tmpForward.normalize();
+-    computeLookRotationToRef(tmpForward, Vector3.Up(), this.reorientTargetRot);
++    computeLookRotationToRef(tmpForward, Vector3.UpReadOnly, this.reorientTargetRot);
+     this.reorienting = true;
+   }
+ 
+   private onMouseMove(e: MouseEvent): void {
+     if (document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. user pressed Escape)
+     this.reorienting = false; // manual look input always takes over from a programmatic reorient
+-    const yaw = e.movementX * LOOK_SENSITIVITY;
+-    const pitch = e.movementY * LOOK_SENSITIVITY;
+-
+-    // Yaw around world up, pitch around the camera's own current right - standard FPS
+-    // mouselook, composed directly onto rotationQuaternion (this is the camera's actual
+-    // object-space orientation already, not a view matrix, so no inversion is needed here -
+-    // contrast with RtsGroundCamera/OrbitTrackballCamera's FromLookDirectionLHToRef usage).
+-    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, tmpQuat);
+-    this.camera.rotationQuaternion!.multiplyInPlace(tmpQuat);
+-    Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
+-    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
+-    Quaternion.RotationAxisToRef(tmpRight, pitch, tmpQuat);
+-    tmpQuat.multiplyToRef(this.camera.rotationQuaternion!, this.camera.rotationQuaternion!);
++    applyMouselookDelta(this.camera.rotationQuaternion!, e.movementX, e.movementY, MOUSELOOK_SENSITIVITY);
+   }
+ 
+   update(deltaSeconds: number): void {
+@@ -177,9 +147,9 @@ export class FreeFlyCamera {
+     }
+ 
+     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
+-    Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
+-    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
+-    Vector3.TransformNormalToRef(Vector3.Up(), tmpMatrix, tmpUp);
++    Vector3.TransformNormalToRef(Vector3.LeftHandedForwardReadOnly, tmpMatrix, tmpForward);
++    Vector3.TransformNormalToRef(Vector3.RightReadOnly, tmpMatrix, tmpRight);
++    Vector3.TransformNormalToRef(Vector3.UpReadOnly, tmpMatrix, tmpUp);
+ 
+     tmpMove.setAll(0);
+     if (this.keys.has(keybindings.get("groundForward"))) tmpMove.addInPlace(tmpForward);
+diff --git a/src/camera/orbitTrackballCamera.ts b/src/camera/orbitTrackballCamera.ts
+index 9e280d7..4ebe5d5 100644
+--- a/src/camera/orbitTrackballCamera.ts
++++ b/src/camera/orbitTrackballCamera.ts
+@@ -3,6 +3,7 @@ import { keybindings } from "../input/keybindings";
+ import { computeLookRotationToRef } from "./lookRotation";
+ import { graphicsSettings } from "../settings/graphicsSettings";
+ import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./pathAvoidance";
++import { applyMouselookDelta, MOUSELOOK_SENSITIVITY, requestPointerLockWithRetry } from "./mouselook";
+ 
+ const DRAG_SENSITIVITY = 0.006; // radians per pixel of drag
+ const INERTIA_DECAY_PER_SEC = 4.5; // exponential decay rate applied to angular velocity after release
+@@ -26,6 +27,15 @@ const KEY_ROTATE_SPEED = 1.0; // rad/s while a WASD key is held
+ const ENTRY_BLEND_MIN_SECONDS = 0.5;
+ const ENTRY_BLEND_MAX_SECONDS = 3.0;
+ const ENTRY_BLEND_SPEED = 3000;
++/** How close (in degrees) plane-locked mode's viewDir is allowed to get to `planeAxis` (either
++ * pole) - see the pole-clamp block in rotateStep for why this can't be 0. Small enough to be
++ * visually imperceptible as a "dead zone" while keeping the pitch-axis cross product safely
++ * away from degenerating to zero. */
++const POLE_CLAMP_DEGREES = 2;
++const MAX_POLE_COS = Math.cos((POLE_CLAMP_DEGREES * Math.PI) / 180);
++/** How long releasing right-mouse look-around takes to slerp back to the normal
++ * looking-at-the-focused-body orientation. */
++const LOOK_RETURN_SECONDS = 0.4;
+ 
+ const tmpQuat = new Quaternion();
+ const tmpMatrix = new Matrix();
+@@ -34,12 +44,23 @@ const tmpIdealUp = new Vector3();
+ const tmpForward = new Vector3();
+ const tmpTargetPos = new Vector3();
+ const tmpTargetRot = new Quaternion();
++const tmpPerp = new Vector3();
++const tmpScaledViewDir = new Vector3();
+ 
+ function easeOutCubic(t: number): number {
+   const u = 1 - t;
+   return 1 - u * u * u;
+ }
+ 
++/** Component of world-up perpendicular to `viewDir` (the "ideal" horizon-level up at that
++ * viewDir), written into `out` - shared by reorient()'s unlocked blend-to-level and the
++ * continuous ambient auto-relevel, both of which recompute this every frame while active. */
++function computeIdealUpToRef(viewDir: Vector3, out: Vector3): void {
++  const d = Vector3.Dot(Vector3.UpReadOnly, viewDir);
++  viewDir.scaleToRef(d, tmpScaledViewDir);
++  out.copyFrom(Vector3.UpReadOnly).subtractInPlace(tmpScaledViewDir);
++}
++
+ /**
+  * Free trackball orbit camera: drag in any direction to tumble the view around the planet
+  * (not constrained to a fixed world "up" axis, unlike a yaw/pitch orbit camera - you can spin
+@@ -79,6 +100,8 @@ export class OrbitTrackballCamera {
+    * setting camera.parent to null itself when using this (same as it already sets camera.parent
+    * to a body's spinNode for the planet case - this class never touches parent on its own). */
+   private trackPosition: (() => Vector3) | null = null;
++  // TEMP DEBUG - remove alongside the logging block at the end of update() once diagnosed.
++  private debugLastLogTime = 0;
+   private dragging = false;
+   private lastX = 0;
+   private lastY = 0;
+@@ -94,14 +117,31 @@ export class OrbitTrackballCamera {
+    * jittered around it - see solarSystem.ts). */
+   private readonly planeAxis = Vector3.Up();
+ 
++  /** True while the right mouse button is held - "looking around from the orbit position"
++   * (see onMouseMove) instead of the normal always-facing-the-body view. Position keeps coming
++   * from viewDir/radius as usual (unaffected - held fixed, since input that would normally
++   * change viewDir is suppressed while this is true - see update()'s own top-level gate);
++   * only the camera's rotation is overridden, from lookAroundRot instead of the computed
++   * look-at-center orientation. */
++  private freeLooking = false;
++  private readonly lookAroundRot = new Quaternion();
++  /** Set the instant right-mouse is released, holding wherever lookAroundRot was at that
++   * moment - update() slerps camera.rotationQuaternion from here back to the normal
++   * look-at-center orientation over LOOK_RETURN_SECONDS, then clears this. */
++  private returnBlendStartRot: Quaternion | null = null;
++  private returnBlendElapsed = 0;
++
+   private readonly keys = new Set<string>();
+   private readonly canvas: HTMLCanvasElement;
+   private pointerDownHandler = (e: PointerEvent) => this.onPointerDown(e);
+   private pointerMoveHandler = (e: PointerEvent) => this.onPointerMove(e);
+-  private pointerUpHandler = () => this.onPointerUp();
++  private pointerUpHandler = (e: PointerEvent) => this.onPointerUp(e);
+   private wheelHandler = (e: WheelEvent) => this.onWheel(e);
+   private keydownHandler = (e: KeyboardEvent) => this.keys.add(e.code);
+   private keyupHandler = (e: KeyboardEvent) => this.keys.delete(e.code);
++  private mouseMoveHandler = (e: MouseEvent) => this.onMouseMove(e);
++  private contextMenuHandler = (e: MouseEvent) => e.preventDefault();
++  private pointerLockChangeHandler = () => this.onPointerLockChange();
+ 
+   constructor(scene: Scene, canvas: HTMLCanvasElement, radius: number, minRadius: number, maxRadius: number, farClip: number) {
+     this.canvas = canvas;
+@@ -126,10 +166,15 @@ export class OrbitTrackballCamera {
+     this.canvas.addEventListener("wheel", this.wheelHandler, { passive: true });
+     window.addEventListener("keydown", this.keydownHandler);
+     window.addEventListener("keyup", this.keyupHandler);
++    window.addEventListener("mousemove", this.mouseMoveHandler);
++    this.canvas.addEventListener("contextmenu", this.contextMenuHandler);
++    document.addEventListener("pointerlockchange", this.pointerLockChangeHandler);
+   }
+ 
+   detach(): void {
+     this.dragging = false;
++    this.freeLooking = false;
++    this.returnBlendStartRot = null;
+     this.keys.clear();
+     this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
+     window.removeEventListener("pointermove", this.pointerMoveHandler);
+@@ -137,6 +182,26 @@ export class OrbitTrackballCamera {
+     this.canvas.removeEventListener("wheel", this.wheelHandler);
+     window.removeEventListener("keydown", this.keydownHandler);
+     window.removeEventListener("keyup", this.keyupHandler);
++    window.removeEventListener("mousemove", this.mouseMoveHandler);
++    this.canvas.removeEventListener("contextmenu", this.contextMenuHandler);
++    document.removeEventListener("pointerlockchange", this.pointerLockChangeHandler);
++    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
++  }
++
++  /** The browser force-exits Pointer Lock on its own in some cases (e.g. the user pressing
++   * Escape) regardless of anything this class does - without this, freeLooking could get stuck
++   * true after the OS already released the lock out from under it. */
++  private onPointerLockChange(): void {
++    if (document.pointerLockElement !== this.canvas && this.freeLooking) this.stopFreeLook();
++  }
++
++  /** Ends look-around (whether from mouse-up or a forced Pointer Lock exit) - captures wherever
++   * lookAroundRot currently is as the start of the slerp-back-to-normal blend in update(). */
++  private stopFreeLook(): void {
++    this.freeLooking = false;
++    this.returnBlendStartRot = this.lookAroundRot.clone();
++    this.returnBlendElapsed = 0;
++    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+   }
+ 
+   /** Points the camera at `worldPoint` (nearest direction on the sphere), used when handing off from ground mode. */
+@@ -228,10 +293,16 @@ export class OrbitTrackballCamera {
+     this.velPitch = 0;
+   }
+ 
+-  /** Cancels any drag/inertia in progress and starts blending roll back to a level horizon at
+-   * the current view direction (never changes which point on the planet is centered). Roll
+-   * only ever re-levels via this explicit call - it does not happen automatically on its own
+-   * when the camera settles. */
++  /** Cancels any drag/inertia in progress and starts blending back to a level view: in the free
++   * (unlocked) trackball mode, that means rolling `up` back to the horizon without changing
++   * which point on the planet is centered - see the unlocked branch in update(). In plane-
++   * locked mode, `up` is already forced level every single frame regardless (see the
++   * unconditional block at the end of update()), so there's nothing for THIS method to do
++   * there via roll alone; instead it blends PITCH back toward the equator (viewDir
++   * perpendicular to planeAxis), preserving the current yaw/azimuth - undoing a climb toward
++   * either pole is this mode's equivalent of "return to a comfortable view" ("reorient should
++   * work on orbit mode" - plane-locked is the default there, so unlocked-only releveling meant
++   * the hotkey was silently a no-op for most orbit-mode sessions). */
+   reorient(): void {
+     this.dragging = false;
+     this.velYaw = 0;
+@@ -260,6 +331,13 @@ export class OrbitTrackballCamera {
+   }
+ 
+   private onPointerDown(e: PointerEvent): void {
++    if (e.button === 2) {
++      this.freeLooking = true;
++      this.returnBlendStartRot = null; // a fresh look-around always wins over an in-progress return blend
++      this.lookAroundRot.copyFrom(this.camera.rotationQuaternion!);
++      if (document.pointerLockElement !== this.canvas) requestPointerLockWithRetry(this.canvas, () => this.freeLooking);
++      return;
++    }
+     if (e.button !== 0) return;
+     this.dragging = true;
+     this.reorienting = false;
+@@ -270,8 +348,13 @@ export class OrbitTrackballCamera {
+     this.velPitch = 0;
+   }
+ 
++  private onMouseMove(e: MouseEvent): void {
++    if (!this.freeLooking || document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. Escape)
++    applyMouselookDelta(this.lookAroundRot, e.movementX, e.movementY, MOUSELOOK_SENSITIVITY);
++  }
++
+   private onPointerMove(e: PointerEvent): void {
+-    if (!this.dragging) return;
++    if (this.freeLooking || !this.dragging) return;
+     const now = performance.now();
+     const dtSeconds = Math.max(0.001, (now - this.lastMoveTime) / 1000);
+     const dx = e.clientX - this.lastX;
+@@ -289,7 +372,11 @@ export class OrbitTrackballCamera {
+     this.velPitch = pitchAngle / dtSeconds;
+   }
+ 
+-  private onPointerUp(): void {
++  private onPointerUp(e: PointerEvent): void {
++    if (e.button === 2) {
++      if (this.freeLooking) this.stopFreeLook();
++      return;
++    }
+     this.dragging = false;
+   }
+ 
+@@ -337,94 +424,165 @@ export class OrbitTrackballCamera {
+       }
+       this.viewDir.normalize();
+     }
+-  }
+-
+-  update(deltaSeconds: number): void {
+-    let keyYaw = 0;
+-    let keyPitch = 0;
+-    let keyRoll = 0;
+-    if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw += 1;
+-    if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw -= 1;
+-    if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch += 1;
+-    if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch -= 1;
+-    if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
+-    if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
+-    if (keyYaw !== 0 || keyPitch !== 0) {
+-      this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
+-      this.reorienting = false;
+-    }
+-    if (keyRoll !== 0) {
+-      // Tumbles `up` around the current view axis - unlike yaw/pitch (rotateStep), this never
+-      // touches viewDir itself, so it doesn't change which point on the planet is centered in
+-      // view, only the camera's own tilt.
+-      Quaternion.RotationAxisToRef(this.viewDir, keyRoll * KEY_ROTATE_SPEED * deltaSeconds, tmpQuat);
+-      Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
+-      Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
+-      this.up.normalize();
+-      this.reorienting = false;
+-    }
+ 
+-    if (!this.dragging) {
+-      const speed = Math.hypot(this.velYaw, this.velPitch);
+-      if (speed > MIN_SETTLE_VELOCITY) {
+-        this.rotateStep(this.velYaw * deltaSeconds, this.velPitch * deltaSeconds);
+-        const decay = Math.exp(-INERTIA_DECAY_PER_SEC * deltaSeconds);
+-        this.velYaw *= decay;
+-        this.velPitch *= decay;
+-      } else {
+-        this.velYaw = 0;
+-        this.velPitch = 0;
++    if (this.planeLocked) {
++      // Pull viewDir back onto the MAX_POLE_COS boundary circle if this step pushed it past
++      // (or exactly onto) either pole - without this, the pitch-axis cross product above
++      // degenerates to zero right at the pole and permanently freezes all further pitch input
++      // (yaw alone can't escape either, since yawing around planeAxis while viewDir IS
++      // planeAxis is a no-op) - "orbit mode gets locked at the poles, it doesn't get full
++      // rotation". Reprojects along the current meridian (azimuth) rather than just clamping,
++      // so it reads as hitting a firm limit, not a stuck/dead camera.
++      const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
++      if (Math.abs(cosFromPole) > MAX_POLE_COS) {
++        tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
++        if (tmpPerp.lengthSquared() < 1e-9) {
++          // No stable azimuth to preserve (viewDir landed exactly on the pole in one step, e.g.
++          // a huge single-frame drag) - any perpendicular direction is as good as any other.
++          tmpPerp.copyFrom(Vector3.RightReadOnly);
++          tmpPerp.subtractInPlace(this.planeAxis.scale(Vector3.Dot(tmpPerp, this.planeAxis)));
++          if (tmpPerp.lengthSquared() < 1e-9) tmpPerp.copyFrom(Vector3.LeftHandedForwardReadOnly);
++        }
++        tmpPerp.normalize();
++        const sign = cosFromPole >= 0 ? 1 : -1;
++        const sinClamped = Math.sqrt(Math.max(0, 1 - MAX_POLE_COS * MAX_POLE_COS));
++        tmpPerp.scaleInPlace(sinClamped); // safe: tmpPerp isn't read again after this line
++        this.viewDir.copyFrom(this.planeAxis).scaleInPlace(sign * MAX_POLE_COS).addInPlace(tmpPerp);
++        this.viewDir.normalize();
+       }
+     }
++  }
+ 
+-    if (this.reorienting && !this.dragging) {
+-      // Blend `up` toward the natural horizon-aligned up at the current viewDir. Only runs
+-      // while explicitly requested via reorient() - see that method's doc comment.
+-      const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+-      tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+-      if (tmpIdealUp.lengthSquared() > 1e-6) {
+-        tmpIdealUp.normalize();
+-        const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
+-        Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
+-        if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
+-      } else {
++  update(deltaSeconds: number): void {
++    // Everything below that would normally change viewDir/up (WASD, drag inertia, reorient,
++    // ambient auto-relevel, plane-lock's forced-up) is suppressed while right-mouse look-around
++    // is active - "looking around from the orbit position" means viewDir/radius (and so the
++    // camera's POSITION) stay exactly where they were the moment right-mouse went down; only
++    // rotation changes, driven by lookAroundRot instead (see onMouseMove) - restored at the very
++    // end of this method once look-around ends (see the position/rotation assignment below).
++    if (!this.freeLooking) {
++      let keyYaw = 0;
++      let keyPitch = 0;
++      let keyRoll = 0;
++      // Reversed from the keybinding's own literal name ("left should be right, up should be
++      // down") - orbitYawRight/orbitPitchUp etc. still name the physical WASD key bound to each
++      // action (see keybindings.ts), just inverted here so the resulting rotation direction
++      // matches what actually feels correct, rather than what the label alone would suggest.
++      if (this.keys.has(keybindings.get("orbitYawRight"))) keyYaw -= 1;
++      if (this.keys.has(keybindings.get("orbitYawLeft"))) keyYaw += 1;
++      if (this.keys.has(keybindings.get("orbitPitchUp"))) keyPitch -= 1;
++      if (this.keys.has(keybindings.get("orbitPitchDown"))) keyPitch += 1;
++      if (this.keys.has(keybindings.get("orbitRollRight"))) keyRoll += 1;
++      if (this.keys.has(keybindings.get("orbitRollLeft"))) keyRoll -= 1;
++      if (keyYaw !== 0 || keyPitch !== 0) {
++        this.rotateStep(keyYaw * KEY_ROTATE_SPEED * deltaSeconds, keyPitch * KEY_ROTATE_SPEED * deltaSeconds);
++        this.reorienting = false;
++      }
++      if (keyRoll !== 0) {
++        // Tumbles `up` around the current view axis - unlike yaw/pitch (rotateStep), this never
++        // touches viewDir itself, so it doesn't change which point on the planet is centered in
++        // view, only the camera's own tilt.
++        Quaternion.RotationAxisToRef(this.viewDir, keyRoll * KEY_ROTATE_SPEED * deltaSeconds, tmpQuat);
++        Matrix.FromQuaternionToRef(tmpQuat, tmpMatrix);
++        Vector3.TransformCoordinatesToRef(this.up, tmpMatrix, this.up);
++        this.up.normalize();
+         this.reorienting = false;
+       }
+-    }
+ 
+-    // Continuous ambient auto-relevel, independent of (and stacks harmlessly with) the hotkey's
+-    // own one-shot reorient() above - see graphicsSettings.reorientationStrength's own comment.
+-    // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
+-    // already forces `up` to a fixed formula every frame just below, making this redundant).
+-    if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
+-      const d = Vector3.Dot(Vector3.Up(), this.viewDir);
+-      tmpIdealUp.copyFrom(Vector3.Up()).subtractInPlace(this.viewDir.scale(d));
+-      if (tmpIdealUp.lengthSquared() > 1e-6) {
+-        tmpIdealUp.normalize();
+-        if (graphicsSettings.reorientationStrength >= 1) {
+-          this.up.copyFrom(tmpIdealUp);
++      if (!this.dragging) {
++        const speed = Math.hypot(this.velYaw, this.velPitch);
++        if (speed > MIN_SETTLE_VELOCITY) {
++          this.rotateStep(this.velYaw * deltaSeconds, this.velPitch * deltaSeconds);
++          const decay = Math.exp(-INERTIA_DECAY_PER_SEC * deltaSeconds);
++          this.velYaw *= decay;
++          this.velPitch *= decay;
+         } else {
+-          const rate = graphicsSettings.reorientationStrength * MAX_AMBIENT_RELEVEL_RATE;
+-          const blend = 1 - Math.exp(-rate * deltaSeconds);
+-          Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
++          this.velYaw = 0;
++          this.velPitch = 0;
+         }
+       }
+-    }
+ 
+-    if (this.planeLocked) {
+-      // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
+-      // rather than letting it free-tumble like the unlocked mode does - this is what makes
+-      // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
+-      const d = Vector3.Dot(this.planeAxis, this.viewDir);
+-      this.up.copyFrom(this.planeAxis).subtractInPlace(this.viewDir.scale(d));
+-      if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.Right());
++      if (this.reorienting && !this.dragging) {
++        if (this.planeLocked) {
++          // up is already forced level every frame below regardless (see the unconditional
++          // planeLocked block) - see reorient()'s own doc comment for why this mode instead
++          // blends PITCH back toward the equator (viewDir perpendicular to planeAxis).
++          const cosFromPole = Vector3.Dot(this.viewDir, this.planeAxis);
++          tmpPerp.copyFrom(this.viewDir).subtractInPlace(this.planeAxis.scale(cosFromPole));
++          if (Math.abs(cosFromPole) > 1e-4 && tmpPerp.lengthSquared() > 1e-9) {
++            tmpPerp.normalize();
++            const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
++            const nextCos = cosFromPole * (1 - blend);
++            const nextSin = Math.sqrt(Math.max(0, 1 - nextCos * nextCos));
++            this.viewDir.copyFrom(this.planeAxis).scaleInPlace(nextCos).addInPlace(tmpPerp.scale(nextSin));
++            this.viewDir.normalize();
++            if (Math.abs(nextCos) < 1e-4) this.reorienting = false;
++          } else {
++            this.reorienting = false;
++          }
++        } else {
++          // Blend `up` toward the natural horizon-aligned up at the current viewDir - never
++          // changes which point on the planet is centered (see reorient()'s own doc comment).
++          computeIdealUpToRef(this.viewDir, tmpIdealUp);
++          if (tmpIdealUp.lengthSquared() > 1e-6) {
++            tmpIdealUp.normalize();
++            const blend = 1 - Math.exp(-RELEVEL_RATE * deltaSeconds);
++            Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
++            if (Vector3.Dot(this.up, tmpIdealUp) > 0.9999) this.reorienting = false;
++          } else {
++            this.reorienting = false;
++          }
++        }
++      }
++
++      // Continuous ambient auto-relevel, independent of (and stacks harmlessly with) the hotkey's
++      // own one-shot reorient() above - see graphicsSettings.reorientationStrength's own comment.
++      // Skipped while dragging (fighting manual input would feel bad) or plane-locked (that mode
++      // already forces `up` to a fixed formula every frame just below, making this redundant).
++      if (!this.dragging && !this.planeLocked && graphicsSettings.reorientationStrength > 0) {
++        computeIdealUpToRef(this.viewDir, tmpIdealUp);
++        if (tmpIdealUp.lengthSquared() > 1e-6) {
++          tmpIdealUp.normalize();
++          if (graphicsSettings.reorientationStrength >= 1) {
++            this.up.copyFrom(tmpIdealUp);
++          } else {
++            const rate = graphicsSettings.reorientationStrength * MAX_AMBIENT_RELEVEL_RATE;
++            const blend = 1 - Math.exp(-rate * deltaSeconds);
++            Vector3.LerpToRef(this.up, tmpIdealUp, blend, this.up);
++          }
++        }
++      }
++
++      if (this.planeLocked) {
++        // Force `up` to the plane-perpendicular component of the fixed planeAxis every frame,
++        // rather than letting it free-tumble like the unlocked mode does - this is what makes
++        // plane-locked feel like a traditional constrained yaw/pitch orbit camera.
++        const d = Vector3.Dot(this.planeAxis, this.viewDir);
++        this.viewDir.scaleToRef(d, tmpScaledViewDir);
++        this.up.copyFrom(this.planeAxis).subtractInPlace(tmpScaledViewDir);
++        if (this.up.lengthSquared() < 1e-6) this.up.copyFrom(Vector3.RightReadOnly);
++        this.up.normalize();
++      }
++
++      // Defensive re-orthonormalization against drift from repeated small rotations/lerps.
++      const upDotView = Vector3.Dot(this.up, this.viewDir);
++      this.up.subtractInPlace(this.viewDir.scale(upDotView));
+       this.up.normalize();
+-    }
+ 
+-    // Defensive re-orthonormalization against drift from repeated small rotations/lerps.
+-    const upDotView = Vector3.Dot(this.up, this.viewDir);
+-    this.up.subtractInPlace(this.viewDir.scale(upDotView));
+-    this.up.normalize();
++      // TEMP DEBUG - remove once the reorient report is diagnosed.
++      const debugNow = performance.now();
++      if (debugNow - this.debugLastLogTime > 500) {
++        this.debugLastLogTime = debugNow;
++        computeIdealUpToRef(this.viewDir, tmpIdealUp);
++        if (tmpIdealUp.lengthSquared() > 1e-6) {
++          tmpIdealUp.normalize();
++          const angleDeg = (Math.acos(Math.min(1, Math.max(-1, Vector3.Dot(this.up, tmpIdealUp)))) * 180) / Math.PI;
++          console.log(
++            `[REORIENT DEBUG] angleFromLevel=${angleDeg.toFixed(2)}deg reorienting=${this.reorienting} planeLocked=${this.planeLocked} dragging=${this.dragging} ambientStrength=${graphicsSettings.reorientationStrength}`,
++          );
++        }
++      }
++    }
+ 
+     if (this.targetRadius !== null) {
+       const blend = 1 - Math.exp(-RADIUS_LERP_RATE * deltaSeconds);
+@@ -461,7 +619,16 @@ export class OrbitTrackballCamera {
+       }
+     } else {
+       this.camera.position.copyFrom(tmpTargetPos);
+-      this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
++      if (this.freeLooking) {
++        this.camera.rotationQuaternion!.copyFrom(this.lookAroundRot);
++      } else if (this.returnBlendStartRot) {
++        this.returnBlendElapsed += deltaSeconds;
++        const t = easeOutCubic(Math.min(1, this.returnBlendElapsed / LOOK_RETURN_SECONDS));
++        Quaternion.SlerpToRef(this.returnBlendStartRot, tmpTargetRot, t, this.camera.rotationQuaternion!);
++        if (t >= 1) this.returnBlendStartRot = null;
++      } else {
++        this.camera.rotationQuaternion!.copyFrom(tmpTargetRot);
++      }
+     }
+   }
+ }
+diff --git a/src/economy/base.ts b/src/economy/base.ts
+index c19b621..cf317f5 100644
+--- a/src/economy/base.ts
++++ b/src/economy/base.ts
+@@ -15,6 +15,7 @@ import type { ExaminableInfo } from "../ui/examineUI";
+  */
+ export class Base implements Dockable {
+   readonly id: string;
++  readonly kind = "base";
+   readonly def: BaseDef;
+   readonly parentBody: CelestialBody;
+   readonly mesh: Mesh;
+@@ -53,7 +54,7 @@ export class Base implements Dockable {
+    * plus the fixed, non-rotating approach offset) rather than the Base's literal instantaneous
+    * spin-rotated surface position - see approachDirectionInOrbitFrame's own doc comment. */
+   predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
+-    this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, out);
++    this.parentBody.predictWorldPositionAt(secondsFromNow, out);
+     out.addInPlace(this.approachDirectionInOrbitFrame.scale(this.parentBody.radius * 1.5));
+     return out;
+   }
+diff --git a/src/economy/dockable.ts b/src/economy/dockable.ts
+index 0b7d9bd..a3acb11 100644
+--- a/src/economy/dockable.ts
++++ b/src/economy/dockable.ts
+@@ -1,10 +1,16 @@
+ import type { Vector3 } from "@babylonjs/core";
++import type { CelestialBody } from "../solarSystem/celestialBody";
+ 
+ /** Anything a Ship can travel to/from and predict the future position of - Base and Station
+  * both implement this. Kept intentionally minimal so shipTransit.ts's rendezvous solver never
+  * needs to know which concrete kind of stop it's dealing with. */
+ export interface Dockable {
+   readonly id: string;
++  readonly kind: "base" | "station";
++  /** The planet this dockable ultimately orbits (directly for Base/Station today) - used by
++   * shipTransit.ts's effectiveCruiseSpeed to keep travel time invariant across the actual/
++   * gameplay orbital-scale toggle (see orbitalScale.gameplayPositionOf). */
++  readonly parentBody: CelestialBody;
+   /** World-space position this dockable will occupy `secondsFromNow` from now. Writes into
+    * `out` and returns it, so callers can reuse a scratch Vector3 across repeated calls (the
+    * rendezvous solver in shipTransit.ts calls this several times per solve). */
+diff --git a/src/economy/economyDefs.ts b/src/economy/economyDefs.ts
+index d3329df..b84f370 100644
+--- a/src/economy/economyDefs.ts
++++ b/src/economy/economyDefs.ts
+@@ -68,12 +68,20 @@ export const BASE_DEFS: readonly BaseDef[] = BODY_DEFS.filter((def) => def.kind
+ // "planet radii" here already reads as a huge distance once compared to nearby orbits/moons
+ // (earthYard at 6x literally sat farther out than the Moon at the old 9x-of-a-*much*-smaller-
+ // radii value). 1.3x keeps every station's torus sitting close against its planet, per "space
+-// dock should be right up against the planet."
++// dock should be right up against the planet." Jupiter and Saturn are the exception: they're the
++// closest outer pair in AU-ratio terms (see scale.ts's OUTER_COMPRESSION_EXPONENT comment - only
++// ~1876 units of clearance between them), so maxSafePersonalSpaceRadius allows Jupiter only
++// ~1.164x and Saturn only ~1.188x its own radius - both below the blanket 1.3x. 1.15x for both
++// keeps comfortable margin under those tighter limits.
+ export const STATION_DEFS: readonly StationDef[] = [
+   { id: "earthYard", name: "Earth Orbital Yard", faction: "solFederation", crew: 220, cargo: "Refined metals", orbitsAround: "Earth", orbitRadiusInParentRadii: 1.3 },
+   { id: "marsRelay", name: "Mars High Station", faction: "solFederation", crew: 90, cargo: "Ice, water", orbitsAround: "Mars", orbitRadiusInParentRadii: 1.3 },
+   { id: "venusRelay", name: "Venus Relay", faction: "solFederation", crew: 40, cargo: "Sulfur compounds", orbitsAround: "Venus", orbitRadiusInParentRadii: 1.3 },
+   { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 1.3 },
++  // Gas giants have no solid ground for a Base, but a Station only ever orbits - no landable
++  // surface required - so these are the fleet's first gas-giant stops.
++  { id: "jupiterHighport", name: "Jupiter Highport", faction: "solFederation", crew: 150, cargo: "Fuel, hydrogen", orbitsAround: "Jupiter", orbitRadiusInParentRadii: 1.15 },
++  { id: "saturnRingStation", name: "Saturn Ring Station", faction: "beltConsortium", crew: 60, cargo: "Rare gases", orbitsAround: "Saturn", orbitRadiusInParentRadii: 1.15 },
+ ];
+ 
+ // Same self-check scale.ts runs for moons, applied here for stations - see
+@@ -97,4 +105,11 @@ export const SHIP_DEFS: readonly ShipDef[] = [
+   { id: "trader1", name: "IS Rustwind", faction: "beltConsortium", crew: 4, cargo: "Ore (80t)", cruiseSpeed: 500, route: ["Pluto", "plutoOutpost"], dwellSeconds: 20 },
+   { id: "courier1", name: "MV Quickstep", faction: "solFederation", crew: 3, cargo: "Mail, small parts", cruiseSpeed: 1100, route: ["Venus", "venusRelay", "Earth"], dwellSeconds: 10 },
+   { id: "trader2", name: "IS Far Horizon", faction: "beltConsortium", crew: 5, cargo: "Exotic ices (30t)", cruiseSpeed: 550, route: ["plutoOutpost", "Eris"], dwellSeconds: 25 },
++  { id: "shuttle1", name: "MV Lunar Ferry", faction: "solFederation", crew: 10, cargo: "Passengers, mail", cruiseSpeed: 750, route: ["Earth", "Moon"], dwellSeconds: 15 },
++  { id: "trader3", name: "IS Solar Wind", faction: "beltConsortium", crew: 6, cargo: "Rare metals", cruiseSpeed: 800, route: ["Mercury", "Venus", "venusRelay"], dwellSeconds: 20 },
++  // Long interplanetary hauls, chained so the belt consortium's supply line reaches all the way
++  // out to Saturn: marsRelay -> jupiterHighport -> saturnRingStation across two ships.
++  { id: "freighter4", name: "MV Deep Range", faction: "solFederation", crew: 12, cargo: "Heavy machinery", cruiseSpeed: 950, route: ["marsRelay", "jupiterHighport"], dwellSeconds: 30 },
++  { id: "trader4", name: "IS Outer Reach", faction: "beltConsortium", crew: 7, cargo: "Exotic gases", cruiseSpeed: 600, route: ["jupiterHighport", "saturnRingStation"], dwellSeconds: 25 },
++  { id: "courier2", name: "MV Swift Arrow", faction: "solFederation", crew: 3, cargo: "Priority mail", cruiseSpeed: 1200, route: ["Earth", "Mars"], dwellSeconds: 10 },
+ ];
+diff --git a/src/economy/economyManager.ts b/src/economy/economyManager.ts
+index 3ccde9e..52eaace 100644
+--- a/src/economy/economyManager.ts
++++ b/src/economy/economyManager.ts
+@@ -43,13 +43,23 @@ export class EconomyManager {
+       this.stations.push(station);
+     }
+ 
+-    this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0])));
++    this.ships = SHIP_DEFS.map((def) => new Ship(scene, def, this.resolveStop(def.route[def.startRouteIndex ?? 0]), this.resolveStop));
+   }
+ 
+   setShipTrajectoriesVisible(visible: boolean): void {
+     for (const ship of this.ships) ship.setTrajectoryVisible(visible);
+   }
+ 
++  /** Every Base/Station whose parentBody is `bodyName` - used by SelectionUI's breadcrumb
++   * navigation (see BreadcrumbNode in selection.ts) to show a body's docked Bases/Stations as
++   * its children, the same way a planet's own moons are. */
++  getDockablesForBody(bodyName: string): (Base | Station)[] {
++    const result: (Base | Station)[] = [];
++    for (const base of this.bases) if (base.parentBody.def.name === bodyName) result.push(base);
++    for (const station of this.stations) if (station.parentBody.def.name === bodyName) result.push(station);
++    return result;
++  }
++
+   /** Walks up from a picked mesh's parent chain looking for a ship's root - same pattern as
+    * SelectionUI's own findBodyIndexForMesh, generalized for a different entity kind. */
+   findShipForMesh(mesh: Node | null): Ship | null {
+diff --git a/src/economy/ship.ts b/src/economy/ship.ts
+index 4e37f8d..3d227de 100644
+--- a/src/economy/ship.ts
++++ b/src/economy/ship.ts
+@@ -1,10 +1,11 @@
+-import { Mesh, MeshBuilder, Quaternion, Scene, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
++import { Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
+ import type { Dockable } from "./dockable";
+ import type { ShipDef } from "./economyDefs";
+ import { FACTION_PALETTES } from "./factions";
+ import { createHullMaterial, createShipIconMaterial, hashSeed, HULL_FACE_UV } from "./hullTexture";
+ import { buildFlightProfile, computeFlightRotations, evaluateFlightProfile, evaluateFlightRotation, solveRendezvous, type FlightProfile } from "./shipTransit";
+ import { EARTH_RADIUS } from "../solarSystem/scale";
++import { createUnlitLineMaterial } from "../solarSystem/celestialOrbit";
+ import type { ExaminableInfo } from "../ui/examineUI";
+ import { graphicsSettings } from "../settings/graphicsSettings";
+ 
+@@ -21,9 +22,30 @@ const ICON_SIZE = 40;
+ const TRAJECTORY_DASH_SIZE = 200;
+ const TRAJECTORY_GAP_SIZE = 150;
+ 
++const tmpPlannedFrom = new Vector3();
++
+ /** Resolves a route-stop id (a Base's bodyName or a Station's id) to its Dockable. */
+ export type StopResolver = (id: string) => Dockable;
+ 
++/** Everything needed to fly (or have flown) one leg: the flight profile itself plus the
++ * destination it's headed to and the prograde/retrograde rotations computed for it - bundled
++ * together so Ship can double-buffer a whole leg at once (planned -> live, see planNextLeg/
++ * departNext) instead of juggling 4 separate mirrored field-pairs. */
++interface FlightLeg {
++  readonly profile: FlightProfile;
++  readonly destination: Dockable;
++  readonly qPrograde: Quaternion;
++  readonly qRetrograde: Quaternion;
++}
++
++function planLeg(from: Vector3, destination: Dockable, arrivalPosition: Vector3, travelSeconds: number): FlightLeg {
++  const profile = buildFlightProfile(from, arrivalPosition, travelSeconds);
++  const qPrograde = new Quaternion();
++  const qRetrograde = new Quaternion();
++  computeFlightRotations(profile, qPrograde, qRetrograde);
++  return { profile, destination, qPrograde, qRetrograde };
++}
++
+ /**
+  * A ship running a fixed back-and-forth route between Bases/Stations (economyDefs.ts's
+  * ShipDef.route). Alternates "docked" (dwelling, loading/unloading) and "transit" (a flip-and-
+@@ -32,6 +54,13 @@ export type StopResolver = (id: string) => Dockable;
+  * TransformNode driving position + rotationQuaternion; both the cube mesh and its billboarded-
+  * icon LOD swap (see updateLod) are parented to it at the origin, so they always share the
+  * same transform without needing to keep two meshes in sync by hand.
++ *
++ * The whole next leg (rendezvous solve, flight profile, prograde/retrograde rotations) is solved
++ * the INSTANT a ship docks - dwellSeconds ahead of when it's actually needed - and simply
++ * consumed at the moment of departure ("preplan trips and routes the same way the years/orbits
++ * are calculated so that they aren't being calculated moment by moment" - the same precompute-
++ * once-then-cheaply-apply idea as CelestialOrbit's own position table). See planNextLeg/
++ * departNext.
+  */
+ export class Ship {
+   readonly def: ShipDef;
+@@ -44,27 +73,40 @@ export class Ship {
+ 
+   private readonly scene: Scene;
+   private phase: ShipPhase = "docked";
+-  private profile: FlightProfile | null = null;
+   private elapsed = 0;
+   private dwellRemaining: number;
+   private routeIndex: number;
+   private routeDirection: 1 | -1 = 1;
+-  private currentDestination: Dockable | null = null;
++  /** The dock this ship is currently sitting at while "docked" - kept so its position can track
++   * that dock's own ongoing motion (orbit/spin) every frame instead of freezing wherever it was
++   * at the moment of arrival (a station or a surface Base both keep moving while a ship dwells
++   * at them). Null while in transit. */
++  private currentDock: Dockable | null = null;
++  /** The leg currently being flown (only set while phase === "transit"). */
++  private liveLeg: FlightLeg | null = null;
++  /** The next leg's rendezvous solution, computed ahead of time by planNextLeg (called the
++   * instant this ship docks, or once at construction for its very first departure) - departNext
++   * just consumes this rather than solving anything itself. */
++  private plannedLeg: FlightLeg | null = null;
+   private trajectoryLine: LinesMesh | null = null;
++  /** Shared across every trajectory line this ship ever creates (a ship's faction/accent color
++   * never changes) - created once in the constructor rather than fresh in departNext() each
++   * time, since Mesh.dispose() doesn't dispose its material by default and this ship departs
++   * many times over a session. */
++  private readonly trajectoryMaterial: StandardMaterial;
+   /** Desired visibility for the NEXT trajectory line created (departNext) - see
+    * setTrajectoryVisible(). Defaults to graphicsSettings.showShipTrajectories's value at
+    * construction; EconomyManager keeps every ship's flag in sync as the setting changes live. */
+   private trajectoryVisible: boolean;
+-  private readonly qPrograde = new Quaternion();
+-  private readonly qRetrograde = new Quaternion();
+ 
+-  constructor(scene: Scene, def: ShipDef, startDock: Dockable) {
++  constructor(scene: Scene, def: ShipDef, startDock: Dockable, resolveStop: StopResolver) {
+     this.scene = scene;
+     this.def = def;
+     this.trajectoryVisible = graphicsSettings.showShipTrajectories;
+     this.routeIndex = def.startRouteIndex ?? 0;
+     // Randomized so a whole roster doesn't all depart in the same frame.
+     this.dwellRemaining = def.dwellSeconds * (0.3 + Math.random() * 0.7);
++    this.currentDock = startDock;
+ 
+     this.root = new TransformNode(`${def.id}Root`, scene);
+     this.root.rotationQuaternion = new Quaternion();
+@@ -81,20 +123,34 @@ export class Ship {
+     this.iconMesh.material = createShipIconMaterial(scene, def.faction);
+     this.iconMesh.parent = this.root;
+     this.iconMesh.setEnabled(false);
++
++    // Same unlit/logarithmic-depth fix CelestialOrbit.createOrbitLine already uses for orbit
++    // lines ("ship lines aren't ordered right" otherwise) - see createUnlitLineMaterial's own
++    // comment.
++    this.trajectoryMaterial = createUnlitLineMaterial(scene, `${def.id}TrajectoryMaterial`, FACTION_PALETTES[def.faction].accent, 0.5);
++
++    // Plans its very first departure too, exactly like every subsequent one arrive() plans -
++    // dwellRemaining (not def.dwellSeconds) is the actual lead time until it happens.
++    this.planNextLeg(resolveStop, this.dwellRemaining);
+   }
+ 
+   update(deltaSeconds: number, cameraWorldPosition: Vector3, resolveStop: StopResolver): void {
+     if (this.phase === "transit") {
+-      this.elapsed = Math.min(this.elapsed + deltaSeconds, this.profile!.totalSeconds);
+-      this.currentSpeed = evaluateFlightProfile(this.profile!, this.elapsed, this.root.position);
+-      evaluateFlightRotation(this.profile!, this.elapsed, this.qPrograde, this.qRetrograde, this.root.rotationQuaternion!);
+-      this.etaSeconds = this.profile!.totalSeconds - this.elapsed;
+-      if (this.elapsed >= this.profile!.totalSeconds) this.arrive();
++      const leg = this.liveLeg!;
++      this.elapsed = Math.min(this.elapsed + deltaSeconds, leg.profile.totalSeconds);
++      this.currentSpeed = evaluateFlightProfile(leg.profile, this.elapsed, this.root.position);
++      evaluateFlightRotation(leg.profile, this.elapsed, leg.qPrograde, leg.qRetrograde, this.root.rotationQuaternion!);
++      this.etaSeconds = leg.profile.totalSeconds - this.elapsed;
++      if (this.elapsed >= leg.profile.totalSeconds) this.arrive(resolveStop);
+     } else {
+       this.currentSpeed = 0;
+       this.etaSeconds = 0;
++      // Stays glued to its dock's own current position every frame instead of freezing at
++      // arrival - a station keeps orbiting (and a surface Base keeps spinning with its planet)
++      // for the whole dwell period.
++      this.currentDock!.predictWorldPositionAt(0, this.root.position);
+       this.dwellRemaining -= deltaSeconds;
+-      if (this.dwellRemaining <= 0) this.departNext(resolveStop);
++      if (this.dwellRemaining <= 0) this.departNext();
+     }
+     this.updateLod(cameraWorldPosition);
+   }
+@@ -122,34 +178,61 @@ export class Ship {
+     this.iconMesh.setEnabled(!showCube);
+   }
+ 
+-  private arrive(): void {
++  private arrive(resolveStop: StopResolver): void {
+     // Snaps to the destination's ACTUAL current position, erasing the fixed-point solver's
+     // small residual error - cheap, and always exactly correct regardless of iteration count.
+-    this.currentDestination!.predictWorldPositionAt(0, this.root.position);
++    const destination = this.liveLeg!.destination;
++    destination.predictWorldPositionAt(0, this.root.position);
++    this.currentDock = destination;
+     this.phase = "docked";
+     this.dwellRemaining = this.def.dwellSeconds;
+     this.trajectoryLine?.dispose();
+     this.trajectoryLine = null;
++    // Immediately plans the NEXT departure, dwellSeconds ahead of when it's actually needed -
++    // see planNextLeg's own comment.
++    this.planNextLeg(resolveStop, this.def.dwellSeconds);
+   }
+ 
+-  private departNext(resolveStop: StopResolver): void {
++  /** Solves the next leg's full rendezvous/flight profile `leadSeconds` ahead of the actual
++   * departure (called the instant this ship docks, with the fresh dwell period as lead time, or
++   * once at construction for the very first departure) - departNext then just consumes the
++   * result instead of solving anything at the moment it's needed. Predicts this ship's own
++   * departure position (currentDock's position `leadSeconds` from now, not its current position)
++   * since it keeps tracking a moving dock right up until it actually leaves (see update()'s
++   * docked branch) - solving from where it will BE, not where it happens to be sitting right now. */
++  private planNextLeg(resolveStop: StopResolver, leadSeconds: number): void {
+     this.advanceRouteIndex();
+     const destination = resolveStop(this.def.route[this.routeIndex]);
+-    const result = solveRendezvous(this.root.position, destination, this.def.cruiseSpeed);
+-    this.profile = buildFlightProfile(this.root.position.clone(), result.arrivalPosition, result.travelSeconds);
+-    computeFlightRotations(this.profile, this.qPrograde, this.qRetrograde);
++    this.currentDock!.predictWorldPositionAt(leadSeconds, tmpPlannedFrom);
++    const result = solveRendezvous(this.currentDock!, tmpPlannedFrom, destination, this.def.cruiseSpeed, leadSeconds);
++    this.plannedLeg = planLeg(tmpPlannedFrom, destination, result.arrivalPosition, result.travelSeconds);
++  }
++
++  /** Consumes whatever planNextLeg already solved (back when this ship docked, or at
++   * construction for the first departure) - no solving happens here, just applying an
++   * already-made plan, the same "precompute once, apply cheaply" idea as CelestialOrbit's own
++   * position table. */
++  private departNext(): void {
++    this.liveLeg = this.plannedLeg!;
++    this.plannedLeg = null;
++    this.currentDock = null;
++    // Snaps to the planned departure point in case update()'s per-frame dock-tracking above drifted
++    // even slightly from the exact position planNextLeg predicted (floating-point residual only -
++    // both read the same dock's predictWorldPositionAt, just moments apart).
++    this.root.position.copyFrom(this.liveLeg.profile.from);
+     this.elapsed = 0;
+     this.phase = "transit";
+-    this.currentDestination = destination;
+ 
+     this.trajectoryLine?.dispose();
+     this.trajectoryLine = MeshBuilder.CreateDashedLines(
+       `${this.def.id}Trajectory`,
+-      { points: [this.profile.from, this.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
++      { points: [this.liveLeg.profile.from, this.liveLeg.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
+       this.scene,
+     );
+-    this.trajectoryLine.color = FACTION_PALETTES[this.def.faction].accent;
+-    this.trajectoryLine.alpha = 0.5;
++    // Reuses the one shared trajectoryMaterial created in the constructor (see its own comment)
++    // rather than a fresh one each departure - Mesh.dispose() doesn't dispose its material by
++    // default, and a ship departs many times over a session.
++    this.trajectoryLine.material = this.trajectoryMaterial;
+     this.trajectoryLine.isPickable = false;
+     this.trajectoryLine.setEnabled(this.trajectoryVisible);
+   }
+diff --git a/src/economy/shipTransit.ts b/src/economy/shipTransit.ts
+index 28c9ee7..edceb16 100644
+--- a/src/economy/shipTransit.ts
++++ b/src/economy/shipTransit.ts
+@@ -1,5 +1,6 @@
+ import { Quaternion, Vector3 } from "@babylonjs/core";
+ import { computeLookRotationToRef } from "../camera/lookRotation";
++import { orbitalScale } from "../solarSystem/orbitalScale";
+ import type { Dockable } from "./dockable";
+ 
+ export interface RendezvousResult {
+@@ -8,11 +9,30 @@ export interface RendezvousResult {
+ }
+ 
+ const tmpPredicted = new Vector3();
++const tmpFromGameplay = new Vector3();
++const tmpToGameplay = new Vector3();
++
++/** Distance between `from`/`to`'s gameplay-equivalent positions (see
++ * orbitalScale.gameplayPositionOf) rather than their real, live (possibly Actual-scale-blended)
++ * ones - a Base/Station's own local offset from its parent planet/moon is independent of the
++ * toggle, so only the parent body's own position needs rescaling. `getAbsolutePosition()` (not
++ * `.position`) since `parentBody` can itself be a moon, whose orbitNode is reparented onto its
++ * own planet's orbitNode (see SolarSystem) - the world matrix already composes that hierarchy for
++ * the current frame, unlike gameplayPositionOf's prediction-free `.position` reads. */
++function gameplayEquivalentDistance(from: Dockable, fromPosition: Vector3, to: Dockable, toPosition: Vector3): number {
++  orbitalScale.gameplayPositionOf(from.parentBody, tmpFromGameplay);
++  tmpFromGameplay.addInPlace(fromPosition).subtractInPlace(from.parentBody.orbit.orbitNode.getAbsolutePosition());
++  orbitalScale.gameplayPositionOf(to.parentBody, tmpToGameplay);
++  tmpToGameplay.addInPlace(toPosition).subtractInPlace(to.parentBody.orbit.orbitNode.getAbsolutePosition());
++  return Vector3.Distance(tmpFromGameplay, tmpToGameplay);
++}
+ 
+ /**
+  * Solves for how long a ship flying with peak speed `cruiseSpeed` (the flip-and-burn flight
+  * profile below - peak speed occurs at the flip point, not a constant cruise) takes to
+- * intercept a moving `destination`, and where that interception point actually is.
++ * intercept a moving `destination`, and where that interception point actually is - `origin` is
++ * only used to keep travel time invariant across the Actual/Gameplay orbital-scale toggle (see
++ * gameplayEquivalentDistance), never to change the destination flown to.
+  *
+  * Circular dependency: travel time depends on distance to the *predicted future* point, which
+  * itself depends on travel time. Solved by fixed-point iteration (an initial "destination
+@@ -20,14 +40,35 @@ const tmpPredicted = new Vector3();
+  * valid because every orbit in this game is near-circular/low-eccentricity (scale.ts caps
+  * eccentricity at 0.02 system-wide) and ship cruise speeds are tuned so travelSeconds stays
+  * well under the destination's own orbital period, so each pass's correction shrinks fast.
++ *
++ * Travel time itself is computed from the GAMEPLAY-equivalent distance to the same converged
++ * intercept point, not the real (possibly Actual-scale) one - "the time it takes to get from
++ * Mars to Jupiter is the same in both Actual and gameplay mode" - so the ship still physically
++ * flies to and arrives at the true, real intercept point (arrivalPosition), only its DURATION is
++ * rescaled. An earlier version of this rescaled `cruiseSpeed` by a separately-snapshotted
++ * distance ratio instead of folding it into this same iteration - only an approximation for a
++ * fast-moving destination over a long flight, since that snapshot and this solve's own converged
++ * intercept point aren't generally the same point. Iterating on the gameplay-equivalent distance
++ * directly, at the SAME point this loop already converges to, is exact instead.
++ * @param leadSeconds How far in the future `departurePosition` already is (0 if solving right at
++ * departure, or however long a dwell period remains if pre-planned ahead of time - see
++ * Ship.planNextLeg) - shifts the whole prediction window so `destination`'s position is always
++ * evaluated at (leadSeconds + travelSeconds) from now, not travelSeconds from now.
+  */
+-export function solveRendezvous(departurePosition: Vector3, destination: Dockable, cruiseSpeed: number, iterations = 3): RendezvousResult {
+-  destination.predictWorldPositionAt(0, tmpPredicted);
+-  let travelSeconds = (2 * Vector3.Distance(departurePosition, tmpPredicted)) / cruiseSpeed;
++export function solveRendezvous(
++  origin: Dockable,
++  departurePosition: Vector3,
++  destination: Dockable,
++  cruiseSpeed: number,
++  leadSeconds = 0,
++  iterations = 3,
++): RendezvousResult {
++  destination.predictWorldPositionAt(leadSeconds, tmpPredicted);
++  let travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
+ 
+   for (let i = 0; i < iterations; i++) {
+-    destination.predictWorldPositionAt(travelSeconds, tmpPredicted);
+-    travelSeconds = (2 * Vector3.Distance(departurePosition, tmpPredicted)) / cruiseSpeed;
++    destination.predictWorldPositionAt(leadSeconds + travelSeconds, tmpPredicted);
++    travelSeconds = (2 * gameplayEquivalentDistance(origin, departurePosition, destination, tmpPredicted)) / cruiseSpeed;
+   }
+ 
+   return { arrivalPosition: tmpPredicted.clone(), travelSeconds };
+diff --git a/src/economy/station.ts b/src/economy/station.ts
+index f7d7ea1..3e5fc6a 100644
+--- a/src/economy/station.ts
++++ b/src/economy/station.ts
+@@ -64,6 +64,7 @@ const STATION_SPIN_SECONDS = 90;
+  */
+ export class Station implements Dockable {
+   readonly id: string;
++  readonly kind = "station";
+   readonly def: StationDef;
+   readonly orbit: CelestialOrbit;
+   readonly parentBody: CelestialBody;
+diff --git a/src/environment/star.ts b/src/environment/star.ts
+index 6ad2441..e2b1d2c 100644
+--- a/src/environment/star.ts
++++ b/src/environment/star.ts
+@@ -9,8 +9,13 @@ import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial } fr
+  * sphere - reads as a bright light source itself, not a lit geometric object.
+  */
+ export class Star {
++  private readonly mesh: Mesh;
++  private readonly baseRadius: number;
++
+   constructor(scene: Scene, radius: number) {
++    this.baseRadius = radius;
+     const mesh = MeshBuilder.CreatePlane("star", { size: radius * 3.5 }, scene);
++    this.mesh = mesh;
+     mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+     mesh.isPickable = false;
+ 
+@@ -36,4 +41,11 @@ export class Star {
+     material.backFaceCulling = false;
+     mesh.material = material;
+   }
++
++  /** Rescales the glow billboard to a new radius (relative to the one passed to the
++   * constructor) - see orbitalScale.ts/SolarSystem.update, which blends this between
++   * STAR_RADIUS and STAR_RADIUS_ACTUAL every frame the same way body distances blend. */
++  setRadius(radius: number): void {
++    this.mesh.scaling.setAll(radius / this.baseRadius);
++  }
+ }
+diff --git a/src/input/keybindings.ts b/src/input/keybindings.ts
+index 7ea38bc..3c63184 100644
+--- a/src/input/keybindings.ts
++++ b/src/input/keybindings.ts
+@@ -21,7 +21,8 @@ export type Action =
+   | "travel"
+   | "exitGround"
+   | "toggleLabels"
+-  | "enterOrbit";
++  | "enterOrbit"
++  | "toggleOrbitalScale";
+ 
+ export const ACTION_LABELS: Record<Action, string> = {
+   orbitYawLeft: "Orbit: yaw left",
+@@ -47,6 +48,7 @@ export const ACTION_LABELS: Record<Action, string> = {
+   exitGround: "Exit ground mode",
+   toggleLabels: "Toggle info labels",
+   enterOrbit: "Enter focus mode around selected target (free cam)",
++  toggleOrbitalScale: "Toggle Actual/Gameplay orbital scale",
+ };
+ 
+ const DEFAULTS: Record<Action, string> = {
+@@ -78,10 +80,12 @@ const DEFAULTS: Record<Action, string> = {
+   travel: "Space",
+   exitGround: "Escape",
+   toggleLabels: "KeyL",
+-  // Shares KeyF with freeCam - safe because freeCam's own toggle only fires when FREE_CAM_ONLY
+-  // is off (see main.ts), same "one physical key, mode-gated behaviors" pattern as above. Needs
+-  // a double-tap (not a single press) to fire - see main.ts's ENTER_FOCUS_DOUBLE_TAP_MS.
++  // Shares KeyF with freeCam - safe because freeCam's own toggle is suppressed while in free cam
++  // with something selected (see main.ts's keydown handler), same "one physical key, mode-gated
++  // behaviors" pattern as above. Needs a double-tap (not a single press) to fire - see main.ts's
++  // ENTER_FOCUS_DOUBLE_TAP_MS.
+   enterOrbit: "KeyF",
++  toggleOrbitalScale: "Backquote",
+ };
+ 
+ const STORAGE_KEY = "experimentrts.keybindings";
+diff --git a/src/main.ts b/src/main.ts
+index 33ae6f1..2ee9a8f 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -19,12 +19,15 @@ import { FreeFlyCamera } from "./camera/freeFlyCamera";
+ import { computeLookRotationToRef } from "./camera/lookRotation";
+ import { computeDetourControlPoint, evaluateDetourPath, type PathObstacle } from "./camera/pathAvoidance";
+ import { SolarSystem } from "./solarSystem/solarSystem";
+-import { BODY_DEFS, sceneDistance, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
+-import { loadHeightmapImage, type HeightmapImageData } from "./terrain/heightmapImage";
++import { BODY_DEFS, actualSceneDistance, COLOR_MAP_SOURCES, HEIGHTMAP_SOURCES, textureResolutionFor, STAR_RADIUS } from "./solarSystem/scale";
++import { orbitalScale } from "./solarSystem/orbitalScale";
++import { loadColorImage, loadHeightmapImage, type ColorImageData, type HeightmapImageData } from "./terrain/heightmapImage";
++import { easeInOutCubic } from "./terrain/mathUtils";
+ import { StellarDust } from "./environment/stellarDust";
+ import { SelectionUI, type SelectedEntity } from "./ui/selection";
+ import { SelectionAreaUI } from "./ui/selectionArea";
+ import { BodyIconsUI } from "./ui/bodyIcons";
++import { OffscreenIndicatorUI } from "./ui/offscreenIndicators";
+ import { EconomyManager } from "./economy/economyManager";
+ import { ExamineUI } from "./ui/examineUI";
+ import { SettingsMenu } from "./ui/settingsMenu";
+@@ -34,17 +37,15 @@ import { graphicsSettings } from "./settings/graphicsSettings";
+ const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
+ const freeCamBadge = document.getElementById("freeCamBadge") as HTMLElement;
+ const planeLockBadge = document.getElementById("planeLockBadge") as HTMLElement;
++const orbitalScaleBadge = document.getElementById("orbitalScaleBadge") as HTMLElement;
+ const freeCamReticle = document.getElementById("freeCamReticle") as HTMLElement;
+ const devStats = document.getElementById("devStats") as HTMLElement;
+ 
+-/** What's left disabled after "controls are getting out of hand ... just free cam" walked back
+- * to a curated subset: the raw F-key free-cam toggle and jumpToRtsAtSpot's cursor-click+Space
+- * ground-mode fast-jump. Orbit/orbitEntity "focus mode" (double-tap F - see
+- * ENTER_FOCUS_DOUBLE_TAP_MS) and ground mode's own natural zoom-in entry from there are
+- * deliberately NOT gated by this - the user asked for exactly that flow back ("move quickly
+- * across the system in an organic manner"). None of the gated logic is removed, just skipped
+- * while this is true - flip it back to false to restore it all. */
+-const FREE_CAM_ONLY = true;
++/** RTS ground mode is disabled for now ("disable RTS mode for now") - Free Cam and Focus/Orbit
++ * are the two supported modes. Gates every path INTO ground mode (jumpToRtsAtSpot's fast jump
++ * from free cam, and orbit mode's own automatic zoom-in transition below) - flip back to true
++ * to restore it; none of the gated logic itself is removed. */
++const RTS_MODE_ENABLED = false;
+ 
+ /** Fixed "parking distance" focus mode zooms to when double-tapping F around a selected body -
+  * not the current distance (clamped), so committing to focus mode always reads the same
+@@ -53,12 +54,14 @@ const FOCUS_MODE_ORBIT_RADIUS_FACTOR = 2.5;
+ 
+ /** How long a second F press must land within a first for enterOrbit to fire - the same
+  * "double-actuate to commit" idea as the mouse double-click-to-zoom, so a single stray tap of F
+- * (now overloaded onto the same key as the disabled freeCam toggle) can't accidentally commit to
++ * (which also toggles free cam on its own - both share this key) can't accidentally commit to
+  * focus mode. */
+ const ENTER_FOCUS_DOUBLE_TAP_MS = 400;
+ 
+-/** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped. */
+-const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => sceneDistance(b.auDistance))) * 1.4;
++/** Comfortably past Eris's orbit (the outermost body) so nothing in the system is ever clipped -
++ * uses actualSceneDistance (not sceneDistance) since Actual scale mode's real-proportional
++ * distances are always farther than gameplay scale's compressed ones for the same body. */
++const FAR_CLIP = Math.max(...BODY_DEFS.map((b) => actualSceneDistance(b.auDistance))) * 1.4;
+ /** Stylized transit duration - not physically timed against distance, just a consistent "warp" feel. */
+ const TRANSIT_DURATION_SECONDS = 3.0;
+ 
+@@ -98,10 +101,6 @@ const ENTITY_ORBIT_MIN_RADIUS = 30;
+ const ENTITY_ORBIT_MAX_RADIUS = 400;
+ const ENTITY_ORBIT_DEFAULT_RADIUS = 120;
+ 
+-function easeInOutCubic(t: number): number {
+-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+-}
+-
+ /** Loads every body's real heightmap (see scale.ts's HEIGHTMAP_SOURCES) up front, resampled to
+  * its size-proportional target resolution, before the solar system is built - CelestialBody
+  * needs the fully-decoded image synchronously at construction time (PlanetHeightfield.elevationAt
+@@ -129,6 +128,35 @@ async function preloadHeightmaps(maxTextureSize: number): Promise<Partial<Record
+   return images;
+ }
+ 
++/** Loads every LANDABLE body's real color/diffuse map (see scale.ts's COLOR_MAP_SOURCES) up
++ * front, same shape and fallback behavior as preloadHeightmaps - resampled to the same
++ * size-proportional target resolution as that body's own heightmap (textureResolutionFor is
++ * per-BODY, not per-source, so color and elevation share one target size for a given body).
++ * Gas giants are deliberately excluded here: their real color texture (if any) is loaded
++ * directly as a GPU Texture at its own native resolution in SolarSystem/CelestialBody instead
++ * of being CPU-decoded through this pixel-array path, which only rocky/dwarf terrain needs
++ * (see CelestialBody's colorImage vs gasGiantColorTextureUrl params). */
++async function preloadColorMaps(maxTextureSize: number): Promise<Partial<Record<string, ColorImageData>>> {
++  const results = await Promise.all(
++    BODY_DEFS.filter((def) => def.kind !== "gasGiant" && COLOR_MAP_SOURCES[def.name]).map(async (def) => {
++      const source = COLOR_MAP_SOURCES[def.name]!;
++      const { width, height } = textureResolutionFor(def, maxTextureSize);
++      try {
++        const image = await loadColorImage(source.url, width, height);
++        return [def.name, image] as const;
++      } catch (err) {
++        console.warn(`Failed to load real color texture for ${def.name}, using procedural terrain color instead.`, err);
++        return null;
++      }
++    }),
++  );
++  const images: Partial<Record<string, ColorImageData>> = {};
++  for (const result of results) {
++    if (result) images[result[0]] = result[1];
++  }
++  return images;
++}
++
+ async function main() {
+   const engine: AbstractEngine = await EngineFactory.CreateAsync(canvas, {});
+   const scene = new Scene(engine);
+@@ -145,7 +173,8 @@ async function main() {
+   ambient.groundColor = new Color3(0.05, 0.05, 0.07);
+ 
+   const heightmapImages = await preloadHeightmaps(engine.getCaps().maxTextureSize);
+-  const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages);
++  const colorImages = await preloadColorMaps(engine.getCaps().maxTextureSize);
++  const solarSystem = new SolarSystem(scene, FAR_CLIP, heightmapImages, colorImages);
+   let focused = solarSystem.focused;
+   let thresholds = radiusThresholds(focused.radius);
+ 
+@@ -170,6 +199,7 @@ async function main() {
+   let reorientPressed = false;
+   let freeCamTogglePressed = false;
+   let lockPlaneTogglePressed = false;
++  let orbitalScaleTogglePressed = false;
+   let enterOrbitPressed = false;
+   let lastEnterOrbitTapTime = 0;
+   // Suppresses the orbit->ground auto-entry check for a moment right after exitToOrbitMode()
+@@ -197,6 +227,7 @@ async function main() {
+   );
+   new SelectionAreaUI(scene, solarSystem, orbitCamera, canvas, () => mode === "orbit" && !freeCamActive && !transiting);
+   const bodyIconsUI = new BodyIconsUI(solarSystem, scene, engine, () => transiting, (index) => selectionUI.setTarget(index));
++  const offscreenIndicatorUI = new OffscreenIndicatorUI(solarSystem, scene, engine);
+   const economyManager = new EconomyManager(scene, solarSystem);
+   const examineUI = new ExamineUI(scene, engine, () => economyManager.getExamineInfo(), () => settingsMenu.isListeningForKey);
+ 
+@@ -217,8 +248,18 @@ async function main() {
+       travelPressed = true;
+     }
+     if (e.code === keybindings.get("reorient")) reorientPressed = true;
+-    if (e.code === keybindings.get("freeCam") && !FREE_CAM_ONLY) freeCamTogglePressed = true;
++    // Shares KeyF with enterOrbit (see below) - while in free cam with something selected, F is
++    // reserved entirely for the double-tap-to-commit gesture; toggling free cam off on the FIRST
++    // tap (then back on for the second) corrupted the free-fly camera's pose (it gets reset to
++    // wherever orbit mode's "off" branch parks it, then re-captured from there) instead of
++    // actually starting the commit flight from free cam's real position. Once nothing's selected,
++    // or once a commit has actually happened (freeCamActive false), F goes back to being a plain
++    // toggle.
++    if (e.code === keybindings.get("freeCam") && !(freeCamActive && (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null))) {
++      freeCamTogglePressed = true;
++    }
+     if (e.code === keybindings.get("lockPlane")) lockPlaneTogglePressed = true;
++    if (e.code === keybindings.get("toggleOrbitalScale") && !e.repeat) orbitalScaleTogglePressed = true;
+     if (e.code === keybindings.get("selectTarget") && freeCamActive) {
+       e.preventDefault();
+       // Space is the single, universal "commit" key in free cam once something's selected:
+@@ -231,17 +272,17 @@ async function main() {
+       // - with nothing selected yet, this is the original keyboard alternative to left-click for
+       //   the free-cam reticle - clicking under Pointer Lock works too, but a dedicated key is
+       //   easier to hit without disturbing mouselook.
+-      // All three "commit" branches stay disabled while FREE_CAM_ONLY is on (double-tapping F is
+-      // the one deliberately-enabled way into focus mode - see ENTER_FOCUS_DOUBLE_TAP_MS below) -
+-      // only plain selection (the final else) still works, so Space just acts like the reticle key.
++      // The jump-to-RTS-ground branch stays disabled while RTS_MODE_ENABLED is off - see its own
++      // comment. The two orbit-entry branches (and plain selection, the final else) are always
++      // available.
+       const spot = selectionUI.selectedSurfacePoint;
+       const spotBody = spot ? solarSystem.bodies[spot.bodyIndex] : null;
+-      if (!FREE_CAM_ONLY && spot && spotBody?.landable) {
++      if (RTS_MODE_ENABLED && spot && spotBody?.landable) {
+         jumpToRtsAtSpot(spotBody, spot.localDir);
+         selectionUI.selectedSurfacePoint = null;
+-      } else if (!FREE_CAM_ONLY && selectionUI.targetIndex !== null) {
++      } else if (selectionUI.targetIndex !== null) {
+         enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
+-      } else if (!FREE_CAM_ONLY && selectionUI.selectedEntity !== null) {
++      } else if (selectionUI.selectedEntity !== null) {
+         // A selected ship/asteroid has no surface spot to jump to RTS at - Space just does the
+         // same smooth orbit-entry double-tapping F (enterOrbit) would, same as the body case above.
+         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
+@@ -257,7 +298,7 @@ async function main() {
+       (selectionUI.targetIndex !== null || selectionUI.selectedEntity !== null)
+     ) {
+       // Needs a double-tap (not a single press) to commit - see ENTER_FOCUS_DOUBLE_TAP_MS's own
+-      // comment for why (this key is shared with the otherwise-inert freeCam toggle).
++      // comment for why (this key is shared with the freeCam toggle).
+       const now = performance.now();
+       if (now - lastEnterOrbitTapTime <= ENTER_FOCUS_DOUBLE_TAP_MS) {
+         enterOrbitPressed = true;
+@@ -432,11 +473,11 @@ async function main() {
+     scene.activeCamera = orbitCamera.camera;
+     orbitCamera.attach();
+     mode = "orbit";
+-    // Google Earth-style by default in focus mode: up stays locked to the body's own polar axis
+-    // (planeAxis, interpreted in spinNode's local frame - see setPlaneLocked's own comment), so
+-    // dragging is pure yaw/pitch with no accumulating roll/tumble - still toggleable with the
+-    // lockPlane key (P) if free-tumble is wanted instead.
+-    orbitCamera.setPlaneLocked(true);
++    // Free trackball by default ("WASD and mouse swipe both don't allow free rotation around
++    // focused planet/moon/ship" - the previous Google-Earth-style plane-locked default only
++    // allows yaw/pitch, no roll/tumble) - still toggleable with the lockPlane key (P) for anyone
++    // who wants the constrained style instead.
++    orbitCamera.setPlaneLocked(false);
+     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
+ 
+     if (target.landable && target.heightfield) {
+@@ -461,6 +502,7 @@ async function main() {
+     freeCamBadge.hidden = true;
+     freeCamReticle.hidden = true;
+     planeLockBadge.hidden = true; // plane-lock doesn't apply to entity-orbit
++    orbitCamera.setPlaneLocked(false); // defensive - don't inherit a stale true from a prior planet-orbit session
+ 
+     orbitCamera.camera.parent = null;
+     orbitCamera.trackWorldPosition(entity.getWorldPosition);
+@@ -789,10 +831,17 @@ async function main() {
+       groundCamera.camera.parent = target.orbit.spinNode;
+     }
+ 
++    // beginFreeCamZoomTo's flight renders from freeFlyCamera.camera (scene.activeCamera was never
++    // reassigned here before) - without this, orbitCamera.camera gets parented/posed correctly
++    // above but the scene keeps drawing the now-frozen free-fly camera forever, which is exactly
++    // what "it locks on then you're stuck facing one way and the planet just moves and spins off
++    // screen" looked like: the real orbit camera was tracking Venus perfectly the whole time, it
++    // just was never the one being rendered from.
++    scene.activeCamera = orbitCamera.camera;
+     orbitCamera.attach();
+     mode = "orbit";
+-    // Google Earth-style by default in focus mode - see enterOrbitFromFreeCam's own comment.
+-    orbitCamera.setPlaneLocked(true);
++    // Free trackball by default - see enterOrbitFromFreeCam's own comment.
++    orbitCamera.setPlaneLocked(false);
+     planeLockBadge.hidden = !orbitCamera.isPlaneLocked;
+     transiting = false;
+     stellarDust.stop();
+@@ -811,29 +860,36 @@ async function main() {
+   // (world origin) despite position now being correct - forcing the view matrix here flushes it.
+   orbitCamera.camera.getViewMatrix(true);
+ 
+-  // Boots straight into free cam under FREE_CAM_ONLY, reusing toggleFreeCam's own "on" branch
+-  // (which captures whichever camera is currently active's pose) rather than duplicating that
+-  // logic - orbitCamera now has its normal default pose established (see the update(0) call just
++  // Boots straight into free cam, reusing toggleFreeCam's own "on" branch (which captures
++  // whichever camera is currently active's pose) rather than duplicating that logic -
++  // orbitCamera now has its normal default pose established (see the update(0) call just
+   // above), so this just carries that straight over into free cam's starting position.
+-  if (FREE_CAM_ONLY) toggleFreeCam();
++  toggleFreeCam();
+ 
+   engine.runRenderLoop(() => {
+     const dt = engine.getDeltaTime() / 1000;
+ 
+     if (groundExitCooldownRemaining > 0) groundExitCooldownRemaining -= dt;
+ 
++    // Advanced unconditionally, regardless of mode - SolarSystem.update reads orbitalScale.blend
++    // every frame to drive each body's current orbital distance, so this needs to keep animating
++    // even while, say, in ground mode looking at just one planet's surface.
++    if (orbitalScaleTogglePressed) orbitalScale.toggle();
++    orbitalScaleTogglePressed = false;
++    orbitalScale.update(dt);
++    orbitalScaleBadge.hidden = !orbitalScale.isActualTarget;
++
++    // Transit-specific camera movement has to run before solarSystem.update below (it computes
++    // transitSunDirOverride, which that call reads) - every OTHER camera update
++    // (orbitCamera/freeFlyCamera/groundCamera) runs AFTER solarSystem.update instead, so it reads
++    // this frame's fresh spinNode transform (orbit translation + axial spin) rather than last
++    // frame's - a body-parented camera should always be positioned/oriented off the same frame's
++    // transform it's about to be rendered with.
+     if (transiting) {
+       // Checked before freeCamActive: beginFreeCamZoomTo starts a transit without turning
+       // freeCamActive off (still conceptually "in free cam", just autopiloting), so this must
+       // win the dispatch or freeFlyCamera.update() would fight the transit's own lerp/slerp.
+       updateTransit(dt);
+-    } else if (freeCamActive) {
+-      freeFlyCamera.update(dt);
+-      resolveFreeCamCollisions();
+-    } else if (mode === "ground") {
+-      groundCamera.update(dt, focused.radius);
+-    } else {
+-      orbitCamera.update(dt); // "orbit" and "orbitEntity" both use orbitCamera
+     }
+ 
+     if (transiting) {
+@@ -848,7 +904,8 @@ async function main() {
+       // space, so the focused body's terrain still needs its camera position converted into
+       // that body's local frame - otherwise LOD freezes at whatever level it was when this mode
+       // started, making nearby terrain look permanently low-res no matter how close the camera
+-      // actually gets.
++      // actually gets. Reads last frame's camera position (this frame's update runs just below) -
++      // a one-frame-stale LOD input is imperceptible, unlike a stale camera pose/rotation.
+       const camPos = freeCamActive ? freeFlyCamera.camera.globalPosition : orbitCamera.camera.globalPosition;
+       focused.orbit.spinNode.getWorldMatrix().invertToRef(tmpInvMatrix);
+       Vector3.TransformCoordinatesToRef(camPos, tmpInvMatrix, tmpFreeCamLocalPos);
+@@ -858,6 +915,17 @@ async function main() {
+       solarSystem.update(dt, focusedCameraLocalPosition, sun);
+     }
+ 
++    if (!transiting) {
++      if (freeCamActive) {
++        freeFlyCamera.update(dt);
++        resolveFreeCamCollisions();
++      } else if (mode === "ground") {
++        groundCamera.update(dt, focused.radius);
++      } else {
++        orbitCamera.update(dt); // "orbit" and "orbitEntity" both use orbitCamera
++      }
++    }
++
+     // HemisphericLight's own direction is fixed at construction (world +Y) while the actual sun
+     // (a DirectionalLight) rotates every frame with whatever body is focused - left unsynced,
+     // the ambient "night floor" only ever applies to the arbitrary half of a sphere facing away
+@@ -873,8 +941,14 @@ async function main() {
+ 
+     if (enterOrbitPressed && freeCamActive && !transiting) {
+       if (selectionUI.targetIndex !== null) {
+-        enterOrbitFromFreeCam(solarSystem.bodies[selectionUI.targetIndex]);
++        // Same warp/fly-in as double-clicking the body ("F is the same as double click, it
++        // zooms to selected object") rather than an instant view-blend from wherever free cam
++        // already happens to be - double-tap-F and double-click are the two ways to trigger the
++        // exact same "commit to focus mode" action, so they should look identical too.
++        beginFreeCamZoomTo(solarSystem.bodies[selectionUI.targetIndex]);
+       } else if (selectionUI.selectedEntity !== null) {
++        // No warp-flight equivalent exists for a moving ship/asteroid target (see
++        // enterOrbitEntityFromFreeCam's own comment) - stays an instant blend.
+         enterOrbitEntityFromFreeCam(selectionUI.selectedEntity);
+       }
+     }
+@@ -920,6 +994,7 @@ async function main() {
+             // exitToOrbitMode) is the actual, narrowly-targeted guard against bouncing straight
+             // back into ground mode mid fly-up; ordinary scroll-in should enter ground mode
+             // promptly the moment the interpolating radius crosses below threshold, mid-lerp or not.
++            RTS_MODE_ENABLED &&
+             focused.landable &&
+             groundExitCooldownRemaining <= 0 &&
+             orbitCamera.radius < thresholds.enterGround
+@@ -950,6 +1025,7 @@ async function main() {
+     selectionUI.update();
+     selectionUI.updateHoverLabel();
+     bodyIconsUI.update();
++    offscreenIndicatorUI.update();
+     economyManager.update(dt, scene.activeCamera!.globalPosition);
+     examineUI.update();
+ 
+diff --git a/src/settings/graphicsSettings.ts b/src/settings/graphicsSettings.ts
+index 22fca92..40ea244 100644
+--- a/src/settings/graphicsSettings.ts
++++ b/src/settings/graphicsSettings.ts
+@@ -44,12 +44,13 @@ class GraphicsSettings {
+    * depth is deliberately capped well below MAX_DEPTH - see FORCE_DETAIL_MAX_DEPTH's own comment
+    * for why forcing the real max depth everywhere is computationally infeasible). */
+   forceMaxTerrainDetail = false;
+-  /** Ambient auto-relevel strength for OrbitTrackballCamera's roll, 0-1: 0 (default) means the
+-   * camera only ever re-levels via the explicit reorient hotkey (this session's original
+-   * behavior, unchanged); 1 snaps to level every frame (effectively instant); values in between
+-   * blend toward level continuously at a rate scaled by this value. Independent of (and stacks
+-   * harmlessly with) the hotkey's own one-shot reorient(). */
+-  reorientationStrength = 0;
++  /** Ambient auto-relevel strength for OrbitTrackballCamera's roll, 0-1: 0 means the camera only
++   * ever re-levels via the explicit reorient hotkey; 1 snaps to level every frame (effectively
++   * instant); values in between blend toward level continuously at a rate scaled by this value.
++   * Independent of (and stacks harmlessly with) the hotkey's own one-shot reorient(). Defaults on
++   * ("turn on automatic reorient slowly") at a low, gentle value rather than off - "0 is
++   * obviously off" is reserved for someone deliberately disabling it via the settings slider. */
++  reorientationStrength = 0.06;
+ 
+   constructor() {
+     this.load();
+diff --git a/src/solarSystem/asteroidBelt.ts b/src/solarSystem/asteroidBelt.ts
+index 57f6f53..be6b50b 100644
+--- a/src/solarSystem/asteroidBelt.ts
++++ b/src/solarSystem/asteroidBelt.ts
+@@ -4,6 +4,8 @@ import { mulberry32 } from "../terrain/prng";
+ const ROCK_COUNT = 260;
+ const BELT_PERIOD_SECONDS = 2600; // one shared slow rotation for the whole belt - fun over accuracy, not per-rock orbits
+ 
++const tmpMatrix = new Matrix();
++
+ /**
+  * A field of small rocks scattered in an annulus between the given inner/outer scene distances
+  * (Mars and Jupiter), rendered as thin instances of one shared mesh for performance - not
+@@ -12,15 +14,33 @@ const BELT_PERIOD_SECONDS = 2600; // one shared slow rotation for the whole belt
+  * (see getRockWorldPosition) despite not having its own transform node per rock - a selected
+  * rock's live world position is composed on demand from its fixed local position (stored at
+  * construction) and the shared belt node's own current rotation.
++ *
++ * Each rock's RADIAL placement within the annulus (radialT, 0 at the inner edge to 1 at the
++ * outer) is stored rather than baked into a fixed distance, so the whole belt can be re-laid-out
++ * as the inner/outer radii themselves change - see setRadii(), called every frame from
++ * SolarSystem.update() with Mars/Jupiter's own live (orbitalScale-blended) distances. Scaling the
++ * belt's TransformNode uniformly instead (the same trick orbit lines use) was rejected: it would
++ * also scale each individual ROCK's size along with the belt's overall radius, which is wrong -
++ * real asteroid sizes don't change, only how far apart Mars and Jupiter (and so the belt between
++ * them) currently are.
+  */
+ export class AsteroidBelt {
+   private readonly node: TransformNode;
+   private readonly rock: Mesh;
+   private readonly localPositions: Vector3[] = [];
++  private readonly radialT: number[] = [];
++  private readonly theta: number[] = [];
++  private readonly heightJitterT: number[] = []; // heightJitter as a fraction of (outer - inner), not a fixed value
++  private readonly rockScale: Vector3[] = [];
++  private readonly rockRotation: Quaternion[] = [];
+   private angle = 0;
++  private currentInner: number;
++  private currentOuter: number;
+ 
+   constructor(scene: Scene, innerDistance: number, outerDistance: number, seed: number) {
+     this.node = new TransformNode("asteroidBelt", scene);
++    this.currentInner = innerDistance;
++    this.currentOuter = outerDistance;
+ 
+     this.rock = MeshBuilder.CreatePolyhedron("asteroidRock", { type: 1, size: 40 }, scene);
+     const material = new StandardMaterial("asteroidMaterial", scene);
+@@ -36,18 +56,45 @@ export class AsteroidBelt {
+     const rand = mulberry32(seed);
+     const matrices: Matrix[] = [];
+     for (let i = 0; i < ROCK_COUNT; i++) {
+-      const distance = innerDistance + rand() * (outerDistance - innerDistance);
++      const t = rand();
+       const theta = rand() * Math.PI * 2;
+-      const heightJitter = (rand() - 0.5) * (outerDistance - innerDistance) * 0.06;
++      const heightJitterT = (rand() - 0.5) * 0.06;
++      this.radialT.push(t);
++      this.theta.push(theta);
++      this.heightJitterT.push(heightJitterT);
++      const distance = innerDistance + t * (outerDistance - innerDistance);
++      const heightJitter = heightJitterT * (outerDistance - innerDistance);
+       const position = new Vector3(Math.cos(theta) * distance, heightJitter, Math.sin(theta) * distance);
+       this.localPositions.push(position);
+       const scale = 0.4 + rand() * 1.6;
+       const rotation = Quaternion.RotationYawPitchRoll(rand() * Math.PI * 2, rand() * Math.PI * 2, rand() * Math.PI * 2);
+-      matrices.push(Matrix.Compose(new Vector3(scale, scale, scale), rotation, position));
++      this.rockScale.push(new Vector3(scale, scale, scale));
++      this.rockRotation.push(rotation);
++      matrices.push(Matrix.Compose(this.rockScale[i], rotation, position));
+     }
+     this.rock.thinInstanceAdd(matrices, true);
+   }
+ 
++  /** Re-lays-out every rock's position (not size/rotation) for a new inner/outer distance pair -
++   * a no-op if unchanged from last call, so calling this unconditionally every frame from
++   * SolarSystem.update() is cheap. Each rock keeps its own radialT (relative position within the
++   * annulus), so the belt visually stretches/compresses as Mars and Jupiter move apart/together
++   * (see orbitalScale.ts) instead of independently drifting away from its own anchoring planets. */
++  setRadii(innerDistance: number, outerDistance: number): void {
++    if (innerDistance === this.currentInner && outerDistance === this.currentOuter) return;
++    this.currentInner = innerDistance;
++    this.currentOuter = outerDistance;
++    const span = outerDistance - innerDistance;
++    for (let i = 0; i < ROCK_COUNT; i++) {
++      const distance = innerDistance + this.radialT[i] * span;
++      const heightJitter = this.heightJitterT[i] * span;
++      const position = this.localPositions[i];
++      position.set(Math.cos(this.theta[i]) * distance, heightJitter, Math.sin(this.theta[i]) * distance);
++      Matrix.ComposeToRef(this.rockScale[i], this.rockRotation[i], position, tmpMatrix);
++      this.rock.thinInstanceSetMatrixAt(i, tmpMatrix, i === ROCK_COUNT - 1);
++    }
++  }
++
+   update(deltaSeconds: number): void {
+     this.angle += deltaSeconds * ((2 * Math.PI) / BELT_PERIOD_SECONDS);
+     this.node.rotation.y = this.angle;
+diff --git a/src/solarSystem/celestialBody.ts b/src/solarSystem/celestialBody.ts
+index ef0e273..32ddd84 100644
+--- a/src/solarSystem/celestialBody.ts
++++ b/src/solarSystem/celestialBody.ts
+@@ -1,11 +1,13 @@
+-import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3, VertexData } from "@babylonjs/core";
++import { Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial, Texture, Vector3, VertexData } from "@babylonjs/core";
+ import { PlanetTerrain } from "../terrain/planetTerrain";
+ import { PlanetHeightfield } from "../terrain/heightfield";
+-import type { HeightmapImageData } from "../terrain/heightmapImage";
++import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
+ import { CelestialOrbit, type CelestialOrbitOptions } from "./celestialOrbit";
+-import { bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
++import { actualBodyRadius, bodyRadius, textureResolutionFor, type BodyDef } from "./scale";
+ import { mulberry32 } from "../terrain/prng";
+ 
++const tmpParentPosition = new Vector3();
++
+ const GAS_GIANT_PALETTES: Record<string, [Color3, Color3]> = {
+   Jupiter: [new Color3(0.55, 0.42, 0.3), new Color3(0.82, 0.68, 0.52)],
+   Saturn: [new Color3(0.68, 0.6, 0.42), new Color3(0.88, 0.82, 0.62)],
+@@ -80,6 +82,33 @@ function createRingMesh(scene: Scene, name: string, innerRadius: number, outerRa
+   return mesh;
+ }
+ 
++/** Optional per-body extras for CelestialBody's constructor - grouped into one object since most
++ * of these are omitted for most bodies (gas giants never take heightmapImage/colorImage, most
++ * dwarf planets/moons have no actualSemiMajorAxis yet, etc.), and positional optional params here
++ * were easy to mis-order at call sites. */
++export interface CelestialBodyOptions {
++  /** A real elevation map preloaded for this body (see heightmapImage.ts and main.ts's preload
++   * step) - only meaningful for landable bodies; switches PlanetHeightfield to sample it instead
++   * of procedural noise. Omit to keep procedural terrain (Pluto/Eris, or if a real map failed to
++   * load). */
++  heightmapImage?: HeightmapImageData;
++  /** The real-world-proportional distance this body's orbit blends toward in "actual" scale mode
++   * - omit for bodies not in the toggle's scope (e.g. dwarf planets/moons with no accurate
++   * real-distance figure entered yet). */
++  actualSemiMajorAxis?: number;
++  /** A real color/diffuse map preloaded for this body (see COLOR_MAP_SOURCES in scale.ts) - only
++   * meaningful for landable bodies; switches PlanetHeightfield's per-vertex terrain color to
++   * sample it instead of the elevation-grayscale fallback. Omit to keep that fallback (Venus/
++   * Pluto/Eris, or if a real map failed to load - see public/textures/SOURCES.md for why those
++   * specifically have none). */
++  colorImage?: ColorImageData;
++  /** A real cloud-band color texture URL for a gas giant (see COLOR_MAP_SOURCES) - loaded
++   * directly as a Babylon Texture (no CPU-side decoding needed, unlike colorImage, since a gas
++   * giant's sphere just needs a GPU diffuse texture, not per-vertex terrain sampling). Omit to
++   * keep the procedural band generator. */
++  gasGiantColorTextureUrl?: string;
++}
++
+ /**
+  * One body in the system: either a landable rocky/dwarf planet (full cube-sphere quadtree
+  * terrain, reusing PlanetTerrain as-is) or a flyby-only gas giant (a cheap textured sphere,
+@@ -92,22 +121,43 @@ export class CelestialBody {
+   readonly terrain: PlanetTerrain | null;
+   readonly mesh: Mesh | null;
+   readonly radius: number;
++  /** The real-world-proportional radius this body's rendered SIZE blends toward in "actual"
++   * scale mode (see orbitalScale.ts/scale.ts's actualBodyRadius) - always defined (every BodyDef
++   * has a realDiameterRatio), unlike actualSemiMajorAxis's opt-in default-to-gameplay pattern,
++   * since real diameter data exists for every body. Applied by SolarSystem.update() as a uniform
++   * orbit.spinNode.scaling factor, not by touching `radius` itself or regenerating terrain - see
++   * that method's own comment for why. */
++  readonly actualRadius: number;
++  /** The semi-major axis this body was constructed with (always the compressed "gameplay"
++   * distance - construction always happens before any actual/gameplay blend ever moves). */
++  readonly gameplaySemiMajorAxis: number;
++  /** The real-world-proportional semi-major axis this body's orbit blends toward in "actual"
++   * scale mode (see orbitalScale.ts) - defaults to gameplaySemiMajorAxis (a no-op scale) for
++   * bodies the toggle doesn't apply to, so SolarSystem.update can blend every body uniformly
++   * without needing to special-case which ones are in scope. */
++  readonly actualSemiMajorAxis: number;
++  /** Set by SolarSystem right after construction for a moon (the planet it orbits - see
++   * BodyDef.orbitsAround) - null for every star-orbiting body. Needed because `orbit`'s own
++   * ellipse math only ever knows its own focus (see CelestialOrbit's class doc comment); a
++   * moon's orbitNode is reparented onto its planet's orbitNode for the CURRENT-frame transform,
++   * but a future-time prediction (predictWorldPositionAt) has no scene graph to walk, so it
++   * composes with this reference explicitly instead. */
++  parentBody: CelestialBody | null = null;
+ 
+-  /**
+-   * @param heightmapImage A real elevation map preloaded for this body (see heightmapImage.ts
+-   * and main.ts's preload step) - only meaningful for landable bodies; switches
+-   * PlanetHeightfield to sample it instead of procedural noise. Omit to keep procedural
+-   * terrain (Pluto/Eris, or if a real map failed to load).
+-   */
+-  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, heightmapImage?: HeightmapImageData) {
++  constructor(scene: Scene, def: BodyDef, orbitOptions: CelestialOrbitOptions, options: CelestialBodyOptions = {}) {
++    const { heightmapImage, actualSemiMajorAxis, colorImage, gasGiantColorTextureUrl } = options;
+     this.def = def;
+     this.orbit = new CelestialOrbit(scene, orbitOptions);
+     this.radius = bodyRadius(def);
++    this.actualRadius = actualBodyRadius(def);
+     this.landable = def.kind !== "gasGiant";
++    this.gameplaySemiMajorAxis = orbitOptions.semiMajorAxis;
++    this.actualSemiMajorAxis = actualSemiMajorAxis ?? orbitOptions.semiMajorAxis;
+ 
+     if (this.landable) {
+       this.terrain = new PlanetTerrain(scene, this.radius, def.seed, this.orbit.spinNode);
+       if (heightmapImage) this.terrain.heightfield.useImage(heightmapImage);
++      if (colorImage) this.terrain.heightfield.useColorImage(colorImage);
+       this.mesh = null;
+       // Seed root-level patches once up front (each call only budgets a few patches - three
+       // calls comfortably covers all 6 root faces) using a point far enough away that no
+@@ -122,9 +172,13 @@ export class CelestialBody {
+       this.mesh = MeshBuilder.CreateSphere(`${def.name}Mesh`, { diameter: this.radius * 2, segments: 32 }, scene);
+       this.mesh.parent = this.orbit.spinNode;
+       const material = new StandardMaterial(`${def.name}Material`, scene);
+-      const maxTextureSize = scene.getEngine().getCaps().maxTextureSize;
+-      const { width, height } = textureResolutionFor(def, maxTextureSize);
+-      material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed, width, height);
++      if (gasGiantColorTextureUrl) {
++        material.diffuseTexture = new Texture(gasGiantColorTextureUrl, scene);
++      } else {
++        const maxTextureSize = scene.getEngine().getCaps().maxTextureSize;
++        const { width, height } = textureResolutionFor(def, maxTextureSize);
++        material.diffuseTexture = createGasGiantTexture(scene, def.name, def.seed, width, height);
++      }
+       material.specularColor = Color3.Black();
+       material.useLogarithmicDepth = true;
+       this.mesh.material = material;
+@@ -139,4 +193,17 @@ export class CelestialBody {
+   get heightfield(): PlanetHeightfield | null {
+     return this.terrain?.heightfield ?? null;
+   }
++
++  /** World-space position this body's orbit focus will occupy `secondsFromNow` from now -
++   * composes with `parentBody` (set for a moon) the same way Station.predictWorldPositionAt
++   * already composes a station with its own parent planet, since CelestialOrbit.
++   * predictLocalPositionAt only ever knows about its own ellipse. */
++  predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
++    this.orbit.predictLocalPositionAt(secondsFromNow, out);
++    if (this.parentBody) {
++      this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, tmpParentPosition);
++      out.addInPlace(tmpParentPosition);
++    }
++    return out;
++  }
+ }
+diff --git a/src/solarSystem/celestialOrbit.ts b/src/solarSystem/celestialOrbit.ts
+index 07d5c04..ce75d28 100644
+--- a/src/solarSystem/celestialOrbit.ts
++++ b/src/solarSystem/celestialOrbit.ts
+@@ -6,6 +6,25 @@ const ORBIT_LINE_SEGMENTS = 128;
+  * visually exact for these near-circular orbits (eccentricity capped at 0.02 system-wide). */
+ const ORBIT_SAMPLE_COUNT = 720;
+ 
++/** A plain unlit StandardMaterial for a LinesMesh (an orbit line, a ship trajectory, ...) - its
++ * own default shader material has no logarithmic-depth support and (without useVertexAlpha,
++ * never passed here) never actually enables GL alpha blending regardless of .alpha, so at this
++ * scene's huge near/far ratio a line would render fully opaque despite an intended transparency
++ * and draw in front of/behind planets in the wrong order (every planet/terrain material uses
++ * useLogarithmicDepth - see celestialBody.ts/planetTerrain.ts - so a linear-depth line can't be
++ * compared against them consistently). This gets both right for free. */
++export function createUnlitLineMaterial(scene: Scene, name: string, color: Color3, alpha: number): StandardMaterial {
++  const material = new StandardMaterial(name, scene);
++  material.emissiveColor = color;
++  material.diffuseColor = Color3.Black();
++  material.specularColor = Color3.Black();
++  material.disableLighting = true;
++  material.alpha = alpha;
++  material.useLogarithmicDepth = true;
++  material.backFaceCulling = false;
++  return material;
++}
++
+ export interface CelestialOrbitOptions {
+   name: string;
+   semiMajorAxis: number;
+@@ -43,27 +62,36 @@ export interface CelestialOrbitOptions {
+  * ORBIT_SAMPLE_COUNT), so a body reaching the end of its cached year lands precisely back on
+  * its first sample rather than drifting - guaranteed by construction, since both ends of the
+  * table come from the same continuous periodic function at theta=0 and theta=2*PI.
++ *
++ * The cached table stores a **unit ellipse** (semi-major axis of 1, shape/eccentricity baked
++ * in) rather than the real semi-major axis - `positionAt(theta) = semiMajor *
++ * unitPositionAt(theta)` factors cleanly since every term is linear in semiMajor (semiMinor and
++ * focalDistance are themselves `semiMajor * f(eccentricity)`). This lets `setSemiMajorAxis`
++ * (the actual/gameplay orbital-scale toggle - see main.ts/orbitalScale.ts) change a body's
++ * orbital distance at runtime as a cheap per-frame scalar multiply, with no resampling.
+  */
+ export class CelestialOrbit {
+   readonly orbitNode: TransformNode;
+   readonly spinNode: TransformNode;
+ 
+-  private readonly semiMajor: number;
+-  private readonly semiMinor: number;
+-  private readonly focalDistance: number;
++  private readonly eccentricity: number;
++  private readonly semiMinorRatio: number; // sqrt(1 - e^2) - semiMinor/semiMajor, independent of scale
+   private readonly orbitU: Vector3;
+   private readonly orbitV: Vector3;
+   private readonly orbitPeriodSeconds: number;
+   private readonly spinPeriodSeconds: number;
+   private readonly spinAxis: Vector3;
+-  private readonly positionSamples: Vector3[];
++  private readonly unitPositionSamples: Vector3[];
++  /** The real, current semi-major axis - everything the cached unit samples get scaled by. Set
++   * once at construction, mutable afterward only via setSemiMajorAxis(). */
++  private currentSemiMajorAxis: number;
+   private orbitAngle: number;
+   private spinAngle = 0;
+ 
+   constructor(scene: Scene, options: CelestialOrbitOptions) {
+-    this.semiMajor = options.semiMajorAxis;
+-    this.semiMinor = this.semiMajor * Math.sqrt(1 - options.eccentricity * options.eccentricity);
+-    this.focalDistance = this.semiMajor * options.eccentricity;
++    this.eccentricity = options.eccentricity;
++    this.semiMinorRatio = Math.sqrt(1 - options.eccentricity * options.eccentricity);
++    this.currentSemiMajorAxis = options.semiMajorAxis;
+     this.orbitPeriodSeconds = options.orbitPeriodSeconds;
+     this.spinPeriodSeconds = options.spinPeriodSeconds;
+     this.spinAxis = options.spinAxis;
+@@ -75,9 +103,9 @@ export class CelestialOrbit {
+     this.orbitU = Vector3.Cross(orbitAxis, arbitrary).normalize();
+     this.orbitV = Vector3.Cross(orbitAxis, this.orbitU).normalize();
+ 
+-    this.positionSamples = [];
++    this.unitPositionSamples = [];
+     for (let i = 0; i < ORBIT_SAMPLE_COUNT; i++) {
+-      this.positionSamples.push(this.positionAt((i / ORBIT_SAMPLE_COUNT) * Math.PI * 2));
++      this.unitPositionSamples.push(this.unitPositionAt((i / ORBIT_SAMPLE_COUNT) * Math.PI * 2));
+     }
+ 
+     this.orbitNode = new TransformNode(`${options.name}Orbit`, scene);
+@@ -88,15 +116,29 @@ export class CelestialOrbit {
+     this.update(0);
+   }
+ 
+-  /** Interpolates the cached position table at `theta` (any real number - wraps automatically)
+-   * into `out`, instead of recomputing positionAt()'s trig fresh. */
++  /** Sets the real semi-major axis used by every position read from now on (positionAt,
++   * sampledPositionToRef, predictLocalPositionAt) - the toggle between actual and gameplay
++   * orbital scale (see SolarSystem.update) calls this every frame with a lerped value. Cheap:
++   * the cached unit-ellipse table never needs resampling. */
++  setSemiMajorAxis(value: number): void {
++    this.currentSemiMajorAxis = value;
++  }
++
++  get semiMajorAxis(): number {
++    return this.currentSemiMajorAxis;
++  }
++
++  /** Interpolates the cached UNIT position table at `theta` (any real number - wraps
++   * automatically) into `out`, then scales by the current real semi-major axis - instead of
++   * recomputing positionAt()'s trig fresh every frame. */
+   private sampledPositionToRef(theta: number, out: Vector3): void {
+     const twoPi = Math.PI * 2;
+     const wrapped = ((theta % twoPi) + twoPi) % twoPi;
+     const f = (wrapped / twoPi) * ORBIT_SAMPLE_COUNT;
+     const i0 = Math.floor(f) % ORBIT_SAMPLE_COUNT;
+     const i1 = (i0 + 1) % ORBIT_SAMPLE_COUNT;
+-    Vector3.LerpToRef(this.positionSamples[i0], this.positionSamples[i1], f - Math.floor(f), out);
++    Vector3.LerpToRef(this.unitPositionSamples[i0], this.unitPositionSamples[i1], f - Math.floor(f), out);
++    out.scaleInPlace(this.currentSemiMajorAxis);
+   }
+ 
+   /** Draws a static line tracing the orbit ellipse, for orientation at a distance. `parentNode`
+@@ -111,34 +153,27 @@ export class CelestialOrbit {
+       points.push(this.positionAt((i / ORBIT_LINE_SEGMENTS) * Math.PI * 2));
+     }
+     const line = MeshBuilder.CreateLines(name, { points }, scene);
+-    // LinesMesh's own default shader material has no logarithmic-depth support and (without
+-    // useVertexAlpha, never passed here) never actually enables GL alpha blending regardless of
+-    // .alpha - at this scene's huge near/far ratio that meant orbit lines rendered fully opaque
+-    // despite the "80% transparent" intent, and drew in front of/behind planets in the wrong
+-    // order (every planet/terrain material uses useLogarithmicDepth - see
+-    // celestialBody.ts/planetTerrain.ts - so a linear-depth line can't be compared against them
+-    // consistently). A plain unlit StandardMaterial gets both right for free.
+-    const material = new StandardMaterial(`${name}Material`, scene);
+-    material.emissiveColor = color;
+-    material.diffuseColor = Color3.Black();
+-    material.specularColor = Color3.Black();
+-    material.disableLighting = true;
+-    material.alpha = 0.2; // 80% transparent
+-    material.useLogarithmicDepth = true;
+-    material.backFaceCulling = false;
+-    line.material = material;
++    line.material = createUnlitLineMaterial(scene, `${name}Material`, color, 0.2); // 80% transparent
+     line.isPickable = false;
+     line.parent = parentNode;
+     return line;
+   }
+ 
+-  /** World-space point on the orbit ellipse at parameter `theta` (0..2π), focus at the origin. */
+-  positionAt(theta: number): Vector3 {
+-    const x = this.semiMajor * Math.cos(theta) - this.focalDistance;
+-    const y = this.semiMinor * Math.sin(theta);
++  /** Unit-scale (semiMajorAxis = 1) point on the orbit ellipse at parameter `theta` (0..2π),
++   * focus at the origin - see the class doc comment on why the cached table stores these
++   * instead of real-scale positions. */
++  private unitPositionAt(theta: number): Vector3 {
++    const x = Math.cos(theta) - this.eccentricity;
++    const y = this.semiMinorRatio * Math.sin(theta);
+     return this.orbitU.scale(x).add(this.orbitV.scale(y));
+   }
+ 
++  /** World-space point on the orbit ellipse at parameter `theta` (0..2π), focus at the origin,
++   * at the current real semi-major axis (see setSemiMajorAxis). */
++  positionAt(theta: number): Vector3 {
++    return this.unitPositionAt(theta).scaleInPlace(this.currentSemiMajorAxis);
++  }
++
+   update(deltaSeconds: number): void {
+     this.orbitAngle += deltaSeconds * ((2 * Math.PI) / this.orbitPeriodSeconds);
+     this.sampledPositionToRef(this.orbitAngle, this.orbitNode.position);
+diff --git a/src/solarSystem/orbitalScale.ts b/src/solarSystem/orbitalScale.ts
+new file mode 100644
+index 0000000..6c52c71
+--- /dev/null
++++ b/src/solarSystem/orbitalScale.ts
+@@ -0,0 +1,65 @@
++import { Vector3 } from "@babylonjs/core";
++import type { CelestialBody } from "./celestialBody";
++import { easeInOutCubic } from "../terrain/mathUtils";
++
++const TRANSITION_DURATION_SECONDS = 5.0;
++const tmpParentGameplay = new Vector3();
++
++/**
++ * The "Actual scale" <-> "Gameplay scale" orbital-distance toggle (default key: `` ` ``) - see
++ * main.ts for the keybinding and SolarSystem.update for where `blend` actually gets applied to
++ * every body's CelestialOrbit.setSemiMajorAxis(). `blend` eases smoothly between 0 (gameplay,
++ * today's compressed distances) and 1 (actual, true real-world proportions) over a fixed
++ * duration rather than snapping instantly ("it needs to expand slerp/lerp not
++ * instantaneously") - pressing the key again mid-transition reverses smoothly from wherever
++ * `blend` currently is, rather than needing to finish first.
++ */
++class OrbitalScale {
++  private target: 0 | 1 = 0;
++  /** Linear (pre-eased) progress toward `target`, 0..1 - advances/reverses at a constant rate
++   * regardless of direction, so reversing mid-transition is symmetric. */
++  private raw = 0;
++  private _blend = 0;
++
++  /** 0 = pure gameplay scale, 1 = pure actual scale, smoothly eased in between. */
++  get blend(): number {
++    return this._blend;
++  }
++
++  /** True once the toggle is heading toward (or has reached) actual scale - drives the
++   * "ACTUAL SCALE" badge, which reflects intent rather than waiting for the blend to finish. */
++  get isActualTarget(): boolean {
++    return this.target === 1;
++  }
++
++  toggle(): void {
++    this.target = this.target === 0 ? 1 : 0;
++  }
++
++  update(deltaSeconds: number): void {
++    const direction = this.target === 1 ? 1 : -1;
++    this.raw = Math.min(1, Math.max(0, this.raw + (direction * deltaSeconds) / TRANSITION_DURATION_SECONDS));
++    this._blend = easeInOutCubic(this.raw);
++  }
++
++  /** Where `body` would currently be (world space) at pure gameplay scale, regardless of the
++   * live blend - exploits the fact that a body's position relative to its own orbital focus is
++   * purely `unitEllipse * semiMajorAxis`, so it's just that LOCAL offset rescaled by
++   * gameplaySemiMajorAxis/currentSemiMajorAxis. For a star-orbiting body that local offset IS
++   * the world position (orbitNode sits directly at the star's world origin - see CelestialOrbit's
++   * own class doc comment); for a moon (a Base/Station can orbit one - e.g. the Moon - since a
++   * later diff added a route there) it's only the offset from its parent planet, so this recurses
++   * through `parentBody` and adds the parent's own gameplay-equivalent world position. Used by
++   * Ship.departNext (via shipTransit.ts) to keep travel time invariant across the orbital-scale
++   * toggle - see that call site's own comment for why. */
++  gameplayPositionOf(body: CelestialBody, out: Vector3): Vector3 {
++    const ratio = body.gameplaySemiMajorAxis / body.orbit.semiMajorAxis;
++    out.copyFrom(body.orbit.orbitNode.position).scaleInPlace(ratio);
++    if (body.parentBody) {
++      out.addInPlace(this.gameplayPositionOf(body.parentBody, tmpParentGameplay));
++    }
++    return out;
++  }
++}
++
++export const orbitalScale = new OrbitalScale();
+diff --git a/src/solarSystem/scale.ts b/src/solarSystem/scale.ts
+index dd4a1b5..ea91572 100644
+--- a/src/solarSystem/scale.ts
++++ b/src/solarSystem/scale.ts
+@@ -14,28 +14,71 @@ export const EARTH_RADIUS = 2000;
+  * orbit, not a wall filling the screen, at this compressed distance scale. */
+ export const STAR_RADIUS = 350;
+ 
+-/**
+- * Compresses a real AU distance into scene units. Exponent < 1 keeps far bodies reachable.
+- * Tuned (with the eccentricity table below) so no two neighboring orbits' radial bands -
+- * [periapsis, apoapsis] plus both bodies' own radii - ever overlap, i.e. planets can never
+- * physically collide even at worst-case orbital phase. Verified numerically (every adjacent
+- * pair keeps a >500 unit margin) rather than derived analytically - see the plan notes.
+- *
+- * Raised from 0.65 to 0.72 ("orbits need to be wider apart") - a single global exponent can't
+- * fully equalize every pair's spacing (Venus/Earth are irreducibly the tightest, both close in
+- * AU and both large bodies - even removing all compression, exponent 1.0, only takes their
+- * gap-to-body-size ratio from 1.4x to ~2x, while ballooning Eris from ~435,000 to 1,904,000
+- * units), so this is a modest, cheap widening everywhere - the real overlap fix is
+- * maxSafePersonalSpaceRadius below, which every moon/station orbit is actually checked against.
+- */
++/** The "Actual scale" counterpart to STAR_RADIUS - the sun's true radius (695,700 km) expressed
++ * on the SAME linear km-per-unit anchor actualSceneDistance() already uses for distance (1 AU =
++ * EARTH_DISTANCE units), so it's genuinely to-scale relative to the real planetary distances
++ * Actual mode moves everything else to - not just "bigger," but the actual real-world ratio.
++ * Real interplanetary distances dwarf even the sun's own size (695,700 km is only ~0.0047 AU),
++ * so this comes out SMALLER than the gameplay placeholder above (~130 vs 350 units) - a genuinely
++ * to-scale solar system famously makes everything read as a tiny dot at real distances, the sun
++ * included; this isn't a compromise, it's what "true size" actually looks like at this anchor. */
++const AU_IN_KM = 149597870.7;
++export const STAR_RADIUS_ACTUAL = EARTH_DISTANCE * (695700 / AU_IN_KM);
++
++/** Everything at or inside this AU distance (Mercury..Mars) uses INNER_COMPRESSION_EXPONENT,
++ * unchanged from before this was made piecewise - Venus/Earth are already the tightest-spaced
++ * pair in the system (see INNER_COMPRESSION_EXPONENT's own comment), so there's zero headroom to
++ * compress the inner system further without them overlapping. Bodies farther than this (Mars
++ * itself is the seam, included in the inner segment) get OUTER_COMPRESSION_EXPONENT instead - a
++ * much steeper curve, safe to use out there since AU gaps between outer bodies are proportionally
++ * much larger relative to their own sizes (see the self-check below, which verified this value).
++ * Set to Mars's own auDistance (BODY_DEFS below) - kept in sync manually since these constants
++ * are defined above that array. */
++const DRAMATIC_SCALE_ANCHOR_AU = 1.52;
++/** Compresses a real AU distance into scene units, for au <= DRAMATIC_SCALE_ANCHOR_AU. Exponent
++ * < 1 keeps far bodies reachable. Raised from 0.65 to 0.72 ("orbits need to be wider apart") - a
++ * single global exponent can't fully equalize every pair's spacing (Venus/Earth are irreducibly
++ * the tightest, both close in AU and both large bodies - even removing all compression, exponent
++ * 1.0, only takes their gap-to-body-size ratio from 1.4x to ~2x), so this is a modest, cheap
++ * widening for the inner system specifically - see maxSafePersonalSpaceRadius below, which every
++ * moon/station orbit is actually checked against. */
++const INNER_COMPRESSION_EXPONENT = 0.72;
++/** Compresses a real AU distance into scene units, for au > DRAMATIC_SCALE_ANCHOR_AU - much
++ * steeper than the inner exponent so "Actual scale" mode (see orbitalScale.ts) reads as
++ * genuinely dramatic for Jupiter onward ("it grows things a little but should be incredibly
++ * dramatic") instead of the ~1.6x-3x a single global 0.72 exponent produced. 0.4 is the largest
++ * safe value with comfortable margin below it - Jupiter/Saturn (physically large, and the
++ * closest outer pair in AU-ratio terms) are the binding constraint: verified numerically (not
++ * hand-derived - an early hand calculation here was wrong) that 0.4 leaves ~1876 units of
++ * clearance there, while lower values (~0.35 and below) make them overlap. See the self-check
++ * below, which enforces this for every consecutive pair, not just Jupiter/Saturn. */
++const OUTER_COMPRESSION_EXPONENT = 0.4;
++
+ export function sceneDistance(au: number): number {
+-  return EARTH_DISTANCE * Math.pow(au, 0.72);
++  if (au <= DRAMATIC_SCALE_ANCHOR_AU) return EARTH_DISTANCE * Math.pow(au, INNER_COMPRESSION_EXPONENT);
++  // Continuous at the seam by construction: this evaluates to EARTH_DISTANCE *
++  // DRAMATIC_SCALE_ANCHOR_AU^INNER_COMPRESSION_EXPONENT (the inner formula's own value at the
++  // seam) when au === DRAMATIC_SCALE_ANCHOR_AU, since (au/anchor)^exp is 1 there.
++  const anchorDistance = EARTH_DISTANCE * Math.pow(DRAMATIC_SCALE_ANCHOR_AU, INNER_COMPRESSION_EXPONENT);
++  return anchorDistance * Math.pow(au / DRAMATIC_SCALE_ANCHOR_AU, OUTER_COMPRESSION_EXPONENT);
+ }
+ 
+ /** 1 AU in scene units - computed once here rather than re-deriving `sceneDistance(1)` wherever
+  * a real-world distance threshold is needed (e.g. terrain.ts's LOD distance breakpoints). */
+ export const AU_IN_SCENE_UNITS = sceneDistance(1);
+ 
++/** The "Actual scale" counterpart to sceneDistance() - true real-world-proportional distance
++ * (linear in AU, no compression curve), anchored so Earth's own distance is IDENTICAL in both
++ * modes ("on actual scale mode it's exactly the same scale; on gameplay scale it's exaggerated")
++ * - only bodies farther/closer than Earth redistribute relative to that fixed anchor. See
++ * orbitalScale.ts for the toggle that blends every body's orbit between this and
++ * sceneDistance(). Always >= sceneDistance() for the same au (the compression curve only ever
++ * shrinks, never grows, outer distances) - callers that need "whichever is farther" (e.g.
++ * FAR_CLIP) can rely on this ordering instead of computing both and comparing. */
++export function actualSceneDistance(au: number): number {
++  return EARTH_DISTANCE * au;
++}
++
+ /** Single knob for "speed everything up/down" requests - divides every period (both orbit and
+  * axial spin) by SPEED_MULTIPLIER, so 0.1 means "10x slower" and 3 means "3x faster". Currently
+  * 3, tuned so a full Earth year takes 10 minutes ("make the simulation run fast, so you can
+@@ -102,6 +145,12 @@ export interface BodyDef {
+   /** Orbit distance from the parent body's center, in units of the PARENT's own scene-unit
+    * radius (not AU) - only used when `orbitsAround` is set. */
+   moonOrbitRadiusInParentRadii?: number;
++  /** The real orbit distance from the parent's center, same units as moonOrbitRadiusInParentRadii
++   * (parent radii) - what this moon's orbit blends toward in "actual" scale mode (see
++   * orbitalScale.ts). Omit for a moon not yet given an accurate real-distance figure - it simply
++   * stays at its gameplay distance regardless of scale mode (see
++   * CelestialBody.actualSemiMajorAxis's own comment on this same fallback pattern). */
++  moonOrbitRadiusInParentRadiiActual?: number;
+   /** Orbit period, scene seconds directly (not run through orbitPeriodSeconds()'s AU-based
+    * compression curve, which is tuned for star-relative distances) - only used when
+    * `orbitsAround` is set. */
+@@ -128,7 +177,10 @@ export const BODY_DEFS: readonly BodyDef[] = [
+   // available clearance, not the full margin) - see maxSafePersonalSpaceRadius and the
+   // self-check loop below, which now catches this class of mistake at load time instead of
+   // needing it to be visually spotted.
+-  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 1.5, moonOrbitPeriodSeconds: 900 },
++  // moonOrbitRadiusInParentRadiiActual: 60.3 is the Moon's real mean distance (~384,400 km)
++  // divided by Earth's real radius (~6,371 km) - what "Actual scale" mode blends toward (see
++  // orbitalScale.ts) alongside the compressed 1.5x gameplay value above.
++  { name: "Moon", kind: "moon", auDistance: 0, orbitYears: 0, eccentricity: 0.02, relativeRadius: 0.27, realDiameterRatio: 0.27, spinPeriodSeconds: 240, seed: 1338, atmosphereLevel: 0, orbitsAround: "Earth", moonOrbitRadiusInParentRadii: 1.5, moonOrbitRadiusInParentRadiiActual: 60.3, moonOrbitPeriodSeconds: 900 },
+   { name: "Mars", kind: "rocky", auDistance: 1.52, orbitYears: 1.88, eccentricity: 0.02, relativeRadius: 0.55, realDiameterRatio: 0.53, spinPeriodSeconds: 210, seed: 103, atmosphereLevel: 0.05 },
+   { name: "Jupiter", kind: "gasGiant", auDistance: 5.2, orbitYears: 11.9, eccentricity: 0.02, relativeRadius: 4.0, realDiameterRatio: 11.2, spinPeriodSeconds: 90, seed: 104, atmosphereLevel: 0 },
+   { name: "Saturn", kind: "gasGiant", auDistance: 9.5, orbitYears: 29.4, eccentricity: 0.02, relativeRadius: 3.5, realDiameterRatio: 9.45, spinPeriodSeconds: 95, seed: 105, atmosphereLevel: 0 },
+@@ -142,6 +194,27 @@ export function bodyRadius(def: BodyDef): number {
+   return EARTH_RADIUS * def.relativeRadius;
+ }
+ 
++/** Earth's TRUE radius (6,371 km), expressed on the same linear km-per-unit anchor as
++ * STAR_RADIUS_ACTUAL/actualSceneDistance (1 AU = EARTH_DISTANCE units) - NOT the compressed
++ * gameplay EARTH_RADIUS constant, which is a "fun over accuracy" visual size unrelated to real
++ * distances. Mixing that gameplay constant into "actual" scale math was the bug: every body's
++ * actualBodyRadius() came out ~1678x too big relative to actualSceneDistance() (e.g. Jupiter's
++ * true ~71,492km radius is only ~13 scene units at this anchor, not the 22,400 the old formula
++ * produced), so gas giants visually swallowed the correctly-real gaps to their neighbors instead
++ * of reading as the tiny dots they truly are at real interplanetary distances. */
++const EARTH_RADIUS_ACTUAL = EARTH_DISTANCE * (6371 / AU_IN_KM);
++
++/** The "Actual scale" counterpart to bodyRadius() - real relative size (def.realDiameterRatio,
++ * NOT the compressed relativeRadius) anchored on EARTH_RADIUS_ACTUAL (Earth's true radius, same
++ * km-per-unit scale as every other "actual" distance/size), so Actual scale is a genuine 1:1
++ * real-world representation, not just "real ratios on a still-inflated anchor." What CelestialBody
++ * blends its rendered size toward (via a uniform spinNode.scaling factor - see solarSystem.ts)
++ * when Actual scale is toggled on - "planets should also look their real size, not just move to
++ * their real distance." */
++export function actualBodyRadius(def: BodyDef): number {
++  return EARTH_RADIUS_ACTUAL * def.realDiameterRatio;
++}
++
+ /** How much of a body's actual clear space to a neighboring body a moon/station orbit is
+  * allowed to use - leaves comfortable headroom rather than running right up to the edge. */
+ const PERSONAL_SPACE_SAFETY_FRACTION = 0.7;
+@@ -187,6 +260,29 @@ for (const def of BODY_DEFS) {
+   }
+ }
+ 
++// Same "fail loudly at load time" philosophy as the moon check above, but for the planets
++// THEMSELVES: maxSafePersonalSpaceRadius already computes each body's clearance to its
++// neighbors internally, but never asserted that clearance is non-negative on its own - it was
++// only ever safe before because INNER_COMPRESSION_EXPONENT (0.72) happened to be gentle
++// everywhere. Piecewise scaling (see DRAMATIC_SCALE_ANCHOR_AU above) makes the outer segment
++// deliberately much steeper, so this guards against a future BODY_DEFS/exponent edit
++// accidentally compressing two neighboring planets into each other (this is exactly how
++// OUTER_COMPRESSION_EXPONENT's own safe value was found - by tightening this check until it
++// failed, then backing off).
++{
++  const starOrbiting = BODY_DEFS.filter((d) => !d.orbitsAround);
++  for (let i = 0; i < starOrbiting.length - 1; i++) {
++    const a = starOrbiting[i];
++    const b = starOrbiting[i + 1];
++    const clearance = sceneDistance(b.auDistance) - sceneDistance(a.auDistance) - bodyRadius(a) - bodyRadius(b);
++    if (clearance < 0) {
++      throw new Error(
++        `${a.name} and ${b.name}'s orbits overlap by ${(-clearance).toFixed(0)} units at gameplay scale - lower OUTER_COMPRESSION_EXPONENT (or INNER_COMPRESSION_EXPONENT, if the overlap is inside DRAMATIC_SCALE_ANCHOR_AU).`,
++      );
++    }
++  }
++}
++
+ export interface HeightmapSource {
+   /** Path under public/, served as a static asset (see vite's public/ convention). */
+   url: string;
+@@ -211,6 +307,31 @@ export const HEIGHTMAP_SOURCES: Partial<Record<string, HeightmapSource>> = {
+   Earth: { url: "/heightmaps/earth_source.png", sourceWidth: 2160 },
+   Moon: { url: "/heightmaps/moon_source.jpg", sourceWidth: 1024 },
+   Mars: { url: "/heightmaps/mars_source.jpg", sourceWidth: 1024 },
++  // New Horizons LORRI/MVIC global DEM (July 2017 release) - see public/heightmaps/SOURCES.md.
++  Pluto: { url: "/heightmaps/pluto_source.jpg", sourceWidth: 1024 },
++};
++
++export interface ColorMapSource {
++  /** Path under public/, served as a static asset. */
++  url: string;
++  /** Pixel width of the actual downloaded source file - same role as
++   * HeightmapSource.sourceWidth, feeding the same shared-density calculation below so no
++   * body's color texture is ever upscaled past what its real source actually offers. */
++  sourceWidth: number;
++}
++
++/** Real color/diffuse textures - landable bodies get them applied per-vertex via
++ * PlanetHeightfield.colorAt (see celestialBody.ts), gas giants get them applied directly as a
++ * material diffuse texture. See public/textures/SOURCES.md for provenance/license per file,
++ * and for which bodies (Venus, Moon, Pluto, Eris) deliberately have no entry here and why. */
++export const COLOR_MAP_SOURCES: Partial<Record<string, ColorMapSource>> = {
++  Mercury: { url: "/textures/mercury_color.jpg", sourceWidth: 1024 },
++  Earth: { url: "/textures/earth_color.jpg", sourceWidth: 2048 },
++  Mars: { url: "/textures/mars_color.jpg", sourceWidth: 1024 },
++  Jupiter: { url: "/textures/jupiter_color.jpg", sourceWidth: 1024 },
++  Saturn: { url: "/textures/saturn_color.jpg", sourceWidth: 2048 },
++  Uranus: { url: "/textures/uranus_color.jpg", sourceWidth: 2048 },
++  Neptune: { url: "/textures/neptune_color.jpg", sourceWidth: 2048 },
+ };
+ 
+ /**
+@@ -230,9 +351,10 @@ export const HEIGHTMAP_SOURCES: Partial<Record<string, HeightmapSource>> = {
+ function computeSharedHeightmapDensity(): number {
+   let density = Infinity;
+   for (const def of BODY_DEFS) {
+-    const source = HEIGHTMAP_SOURCES[def.name];
+-    if (!source) continue;
+-    density = Math.min(density, source.sourceWidth / def.realDiameterRatio);
++    const heightmapSource = HEIGHTMAP_SOURCES[def.name];
++    if (heightmapSource) density = Math.min(density, heightmapSource.sourceWidth / def.realDiameterRatio);
++    const colorSource = COLOR_MAP_SOURCES[def.name];
++    if (colorSource) density = Math.min(density, colorSource.sourceWidth / def.realDiameterRatio);
+   }
+   return density;
+ }
+diff --git a/src/solarSystem/solarSystem.ts b/src/solarSystem/solarSystem.ts
+index 0aa9f96..cefc020 100644
+--- a/src/solarSystem/solarSystem.ts
++++ b/src/solarSystem/solarSystem.ts
+@@ -4,9 +4,10 @@ import { Star } from "../environment/star";
+ import { Starfield } from "../environment/starfield";
+ import { CelestialBody } from "./celestialBody";
+ import { AsteroidBelt } from "./asteroidBelt";
+-import { BODY_DEFS, sceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS } from "./scale";
++import { BODY_DEFS, COLOR_MAP_SOURCES, sceneDistance, actualSceneDistance, orbitPeriodSeconds, spinPeriodSeconds, moonOrbitPeriodSeconds, STAR_RADIUS, STAR_RADIUS_ACTUAL } from "./scale";
++import { orbitalScale } from "./orbitalScale";
+ import { mulberry32 } from "../terrain/prng";
+-import type { HeightmapImageData } from "../terrain/heightmapImage";
++import type { ColorImageData, HeightmapImageData } from "../terrain/heightmapImage";
+ 
+ const tmpSunDirection = new Vector3();
+ 
+@@ -17,8 +18,10 @@ function jitteredAxis(base: Vector3, rand: () => number, spread: number): Vector
+ 
+ /** Deterministic per-body orbit-line color, keyed off the body's own procedural-terrain seed
+  * (already a unique per-body number) so every orbit reads as visually distinct rather than one
+- * indistinguishable gray loop for the whole system - full saturation/value, only hue varies. */
+-function orbitLineColorFor(seed: number): Color3 {
++ * indistinguishable gray loop for the whole system - full saturation/value, only hue varies.
++ * Exported so other per-body UI (e.g. OffscreenIndicatorUI's arrows) can match a body's own
++ * orbit line color exactly, not just look similar. */
++export function orbitLineColorFor(seed: number): Color3 {
+   const hue = mulberry32(seed * 7919 + 13)() * 360;
+   return Color3.FromHSV(hue, 0.55, 0.95);
+ }
+@@ -29,11 +32,44 @@ export class SolarSystem {
+   readonly bodies: CelestialBody[];
+   readonly belt: AsteroidBelt;
+   focusedIndex: number;
+-  private readonly orbitLineMeshes: LinesMesh[] = [];
++  /** The CelestialOrbit each line was drawn from, and the gameplay-scale semi-major axis it was
++   * drawn AT (a fixed one-time mesh, never rebuilt) - so SolarSystem.update can keep it visually
++   * attached to its body by applying a uniform mesh.scaling = currentSMA/gameplaySMA every frame
++   * instead of regenerating geometry. currentRatio tracks the last-applied scale so update() can
++   * skip the (Babylon-dirtying) write when nothing's actually changed, the same way
++   * AsteroidBelt.setRadii already no-ops when unchanged. */
++  private readonly orbitLines: {
++    mesh: LinesMesh;
++    gameplaySemiMajorAxis: number;
++    getCurrentSemiMajorAxis: () => number;
++    currentRatio: number;
++  }[] = [];
++  /** Belt inner/outer are re-derived every frame from Mars/Jupiter's own LIVE (possibly
++   * orbitalScale-blended) semi-major axis - same 1.3x/0.8x factors used to compute them once at
++   * construction below, just re-evaluated continuously so the belt stretches/compresses along
++   * with Mars and Jupiter instead of staying frozen at gameplay scale (see AsteroidBelt.setRadii's
++   * own comment for why a uniform mesh-scale trick isn't used here, unlike orbit lines). */
++  private readonly beltMars: CelestialBody;
++  private readonly beltJupiter: CelestialBody;
++  private currentStarRadius = STAR_RADIUS;
++  /** Last blend value the size pass below applied - lets it skip re-writing every body's
++   * spinNode.scaling when blend hasn't moved (most frames, once a transition finishes), same
++   * no-op-guard idea as the orbit-line scaling loop just above it. Sentinel -1 so the very first
++   * update() always applies (blend's real range is 0..1). */
++  private currentSizeBlend = -1;
+ 
+   /** @param farClip Camera far-clip distance (see main.ts) - the starfield sits just inside it,
+-   * as close to "fixed at infinity" as the clipping range allows. */
+-  constructor(scene: Scene, farClip: number, heightmapImages: Partial<Record<string, HeightmapImageData>> = {}) {
++   * as close to "fixed at infinity" as the clipping range allows.
++   * @param colorImages Preloaded real color/diffuse maps for landable bodies (see
++   * COLOR_MAP_SOURCES/preloadColorMaps) - gas giants' real color textures are looked up
++   * directly from COLOR_MAP_SOURCES by URL below instead, since they're loaded as a plain GPU
++   * Texture rather than CPU-decoded pixel data (see CelestialBody's constructor doc comment). */
++  constructor(
++    scene: Scene,
++    farClip: number,
++    heightmapImages: Partial<Record<string, HeightmapImageData>> = {},
++    colorImages: Partial<Record<string, ColorImageData>> = {},
++  ) {
+     this.star = new Star(scene, STAR_RADIUS);
+     new Starfield(scene, farClip * 0.95);
+ 
+@@ -52,12 +88,13 @@ export class SolarSystem {
+     const moonDefs = BODY_DEFS.filter((def) => def.orbitsAround);
+ 
+     this.bodies = starOrbitingDefs.map((def, index) => {
++      const gameplaySemiMajorAxis = sceneDistance(def.auDistance);
+       const body = new CelestialBody(
+         scene,
+         def,
+         {
+           name: def.name,
+-          semiMajorAxis: sceneDistance(def.auDistance),
++          semiMajorAxis: gameplaySemiMajorAxis,
+           eccentricity: def.eccentricity,
+           orbitPeriodSeconds: orbitPeriodSeconds(def.orbitYears),
+           orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.06),
+@@ -65,21 +102,36 @@ export class SolarSystem {
+           spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
+           startAngle: (index / starOrbitingDefs.length) * Math.PI * 2 + rand() * 0.5,
+         },
+-        heightmapImages[def.name],
++        {
++          heightmapImage: heightmapImages[def.name],
++          actualSemiMajorAxis: actualSceneDistance(def.auDistance),
++          colorImage: colorImages[def.name],
++          gasGiantColorTextureUrl: COLOR_MAP_SOURCES[def.name]?.url,
++        },
+       );
+-      this.orbitLineMeshes.push(body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed)));
++      const line = body.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed));
++      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => body.orbit.semiMajorAxis, currentRatio: 1 });
+       return body;
+     });
+ 
+     for (const def of moonDefs) {
+       const parent = this.bodies.find((b) => b.def.name === def.orbitsAround);
+       if (!parent) continue; // BODY_DEFS is static and self-consistent - shouldn't happen
++      const gameplaySemiMajorAxis = parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6);
++      // parent.actualRadius (the parent's TRUE real-world radius), not parent.radius (its
++      // compressed gameplay radius) - moonOrbitRadiusInParentRadiiActual is a real-world ratio
++      // (real distance / real parent radius), so it must be anchored on the parent's own real
++      // radius to land on the same genuinely-1:1 scale actualSceneDistance() uses for planets
++      // (see EARTH_RADIUS_ACTUAL's comment in scale.ts for why the gameplay radius was wrong here).
++      const actualSemiMajorAxis = def.moonOrbitRadiusInParentRadiiActual
++        ? parent.actualRadius * def.moonOrbitRadiusInParentRadiiActual
++        : gameplaySemiMajorAxis;
+       const moon = new CelestialBody(
+         scene,
+         def,
+         {
+           name: def.name,
+-          semiMajorAxis: parent.radius * (def.moonOrbitRadiusInParentRadii ?? 6),
++          semiMajorAxis: gameplaySemiMajorAxis,
+           eccentricity: def.eccentricity,
+           orbitPeriodSeconds: moonOrbitPeriodSeconds(def),
+           orbitAxis: jitteredAxis(baseOrbitAxis, rand, 0.2),
+@@ -87,17 +139,23 @@ export class SolarSystem {
+           spinAxis: jitteredAxis(baseSpinAxis, rand, 0.15),
+           startAngle: rand() * Math.PI * 2,
+         },
+-        heightmapImages[def.name],
++        {
++          heightmapImage: heightmapImages[def.name],
++          actualSemiMajorAxis,
++          colorImage: colorImages[def.name],
++        },
+       );
+       moon.orbit.orbitNode.parent = parent.orbit.orbitNode;
+-      this.orbitLineMeshes.push(moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode));
++      moon.parentBody = parent;
++      const line = moon.orbit.createOrbitLine(scene, `${def.name}OrbitLine`, orbitLineColorFor(def.seed), parent.orbit.orbitNode);
++      this.orbitLines.push({ mesh: line, gameplaySemiMajorAxis, getCurrentSemiMajorAxis: () => moon.orbit.semiMajorAxis, currentRatio: 1 });
+       this.bodies.push(moon);
+     }
+ 
+-    const marsIndex = BODY_DEFS.findIndex((b) => b.name === "Mars");
+-    const jupiterIndex = BODY_DEFS.findIndex((b) => b.name === "Jupiter");
+-    const beltInner = sceneDistance(BODY_DEFS[marsIndex].auDistance) * 1.3;
+-    const beltOuter = sceneDistance(BODY_DEFS[jupiterIndex].auDistance) * 0.8;
++    this.beltMars = this.bodies.find((b) => b.def.name === "Mars")!;
++    this.beltJupiter = this.bodies.find((b) => b.def.name === "Jupiter")!;
++    const beltInner = this.beltMars.gameplaySemiMajorAxis * 1.3;
++    const beltOuter = this.beltJupiter.gameplaySemiMajorAxis * 0.8;
+     this.belt = new AsteroidBelt(scene, beltInner, beltOuter, 909);
+ 
+     this.focusedIndex = BODY_DEFS.findIndex((b) => b.name === "Earth");
+@@ -110,7 +168,7 @@ export class SolarSystem {
+   }
+ 
+   setOrbitLinesVisible(visible: boolean): void {
+-    for (const line of this.orbitLineMeshes) line.setEnabled(visible);
++    for (const line of this.orbitLines) line.mesh.setEnabled(visible);
+   }
+ 
+   /**
+@@ -133,10 +191,51 @@ export class SolarSystem {
+    * clicked?").
+    */
+   update(deltaSeconds: number, focusedCameraLocalPosition: Vector3, sun: DirectionalLight, sunDirectionOverride?: Vector3): void {
++    const blend = orbitalScale.blend;
+     for (const body of this.bodies) {
++      // A no-op for bodies actualSemiMajorAxis === gameplaySemiMajorAxis (not in the toggle's
++      // scope, or Earth itself - the fixed anchor both modes agree on) - cheap enough (~12
++      // bodies) not to bother skipping those explicitly.
++      body.orbit.setSemiMajorAxis(body.gameplaySemiMajorAxis + (body.actualSemiMajorAxis - body.gameplaySemiMajorAxis) * blend);
+       body.orbit.update(deltaSeconds);
+     }
++    // Orbit-line meshes are drawn once at gameplay scale and never rebuilt (see
++    // CelestialOrbit.createOrbitLine) - a uniform mesh scale keeps each one visually attached to
++    // its body's current (possibly blended) distance instead of the geometry going stale. Skipped
++    // when the ratio hasn't actually moved (most bodies, most frames) - same no-op guard as
++    // AsteroidBelt.setRadii, since writing .scaling unconditionally would dirty the TransformNode
++    // and force a world-matrix recompute every frame for lines that never move.
++    for (const line of this.orbitLines) {
++      const ratio = line.getCurrentSemiMajorAxis() / line.gameplaySemiMajorAxis;
++      if (ratio === line.currentRatio) continue;
++      line.currentRatio = ratio;
++      line.mesh.scaling.setAll(ratio);
++    }
++    this.belt.setRadii(this.beltMars.orbit.semiMajorAxis * 1.3, this.beltJupiter.orbit.semiMajorAxis * 0.8);
+     this.belt.update(deltaSeconds);
++    // Blends each body's RENDERED SIZE toward its real diameter ratio via a uniform
++    // spinNode.scaling factor, not by touching `radius` or regenerating terrain geometry -
++    // spinNode is the parent of the terrain patches, the gas-giant mesh+ring, Base's fixed
++    // surface offset, AND (whenever this body is focused) the orbit/ground camera itself, so
++    // scaling it uniformly grows/shrinks the visible planet in world space for free while
++    // leaving every LOCAL (body-radii-relative) distance - camera thresholds, terrain LOD's own
++    // distance math, Base's surface anchor - completely unaffected (see the plan notes for why
++    // this is safe). `blend` is shared by every body, so this whole pass is skipped (not just
++    // per-body, like the orbit-line loop above) whenever it hasn't moved since last frame.
++    if (blend !== this.currentSizeBlend) {
++      this.currentSizeBlend = blend;
++      for (const body of this.bodies) {
++        const ratio = 1 + (body.actualRadius / body.radius - 1) * blend;
++        body.orbit.spinNode.scaling.setAll(ratio);
++      }
++    }
++    // Blends the same way every body's own distance does - see STAR_RADIUS_ACTUAL's own comment
++    // on why this genuinely shrinks (not grows) at full Actual scale.
++    const starRadius = STAR_RADIUS + (STAR_RADIUS_ACTUAL - STAR_RADIUS) * blend;
++    if (starRadius !== this.currentStarRadius) {
++      this.currentStarRadius = starRadius;
++      this.star.setRadius(starRadius);
++    }
+ 
+     this.focused.terrain?.update(focusedCameraLocalPosition);
+ 
+diff --git a/src/style.css b/src/style.css
+index 253b587..0dd27cc 100644
+--- a/src/style.css
++++ b/src/style.css
+@@ -243,11 +243,15 @@ body {
+ }
+ 
+ .free-cam-badge {
++  /* z-index 16 here and on every other persistent badge/label/panel below (plane-lock,
++     orbital-scale, orbit-focus, dev-stats, focus-list) - one above body-icons-layer/
++     offscreen-indicator-layer's own 15, so a per-frame HUD marker positioned near a screen
++     edge never renders on top of and collides with this permanent UI chrome. */
+   position: fixed;
+   bottom: 16px;
+   left: 50%;
+   transform: translateX(-50%);
+-  z-index: 10;
++  z-index: 16;
+   padding: 6px 14px;
+   font-family: system-ui, sans-serif;
+   font-size: 13px;
+@@ -268,7 +272,7 @@ body {
+   bottom: 52px;
+   left: 50%;
+   transform: translateX(-50%);
+-  z-index: 10;
++  z-index: 16;
+   padding: 6px 14px;
+   font-family: system-ui, sans-serif;
+   font-size: 13px;
+@@ -284,12 +288,33 @@ body {
+   display: none;
+ }
+ 
++.orbital-scale-badge {
++  position: fixed;
++  bottom: 88px;
++  left: 50%;
++  transform: translateX(-50%);
++  z-index: 16;
++  padding: 6px 14px;
++  font-family: system-ui, sans-serif;
++  font-size: 13px;
++  font-weight: 600;
++  letter-spacing: 0.05em;
++  color: #ffb37b;
++  background: rgba(20, 20, 24, 0.75);
++  border: 1px solid rgba(255, 179, 123, 0.4);
++  border-radius: 6px;
++}
++
++.orbital-scale-badge[hidden] {
++  display: none;
++}
++
+ .orbit-focus-label {
+   position: fixed;
+   top: 16px;
+   left: 50%;
+   transform: translateX(-50%);
+-  z-index: 10;
++  z-index: 16;
+   padding: 6px 16px;
+   font-family: system-ui, sans-serif;
+   font-size: 15px;
+@@ -310,7 +335,7 @@ body {
+   position: fixed;
+   bottom: 16px;
+   left: 16px;
+-  z-index: 10;
++  z-index: 16;
+   padding: 8px 10px;
+   font-family: ui-monospace, monospace;
+   font-size: 12px;
+@@ -370,7 +395,7 @@ body {
+   position: fixed;
+   top: 16px;
+   left: 16px;
+-  z-index: 10;
++  z-index: 16;
+   min-width: 160px;
+   padding: 10px 14px;
+   font-family: system-ui, sans-serif;
+@@ -523,6 +548,18 @@ body {
+   box-shadow: 0 0 4px rgba(207, 216, 255, 0.9);
+ }
+ 
++/* Within 1 AU the real body is already visible - only the always-on label persists there. Not
++   clickable at that range: the real mesh (and anything rendered near it, e.g. a ship/moon) is
++   right there for scene.pick() to resolve instead, and this label sits at the exact same screen
++   point so it would otherwise intercept clicks meant for that closer geometry. */
++.body-icon-close .body-icon-dot {
++  display: none;
++}
++
++.body-icon-close {
++  pointer-events: none;
++}
++
+ .body-icon-label {
+   font-family: system-ui, sans-serif;
+   font-size: 11px;
+@@ -531,3 +568,58 @@ body {
+   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+   white-space: nowrap;
+ }
++
++.offscreen-indicator-layer {
++  position: fixed;
++  inset: 0;
++  z-index: 15;
++  pointer-events: none;
++}
++
++.offscreen-indicator {
++  position: absolute;
++  top: 0;
++  left: 0;
++  /* translate(x, y) (screen edge point) translate(-50%, -50%) (center on it) - set entirely by
++     JS each frame, same convention as .body-icon's own transform. Glyph and label below are
++     each independently absolutely-positioned within this container (see their own transforms)
++     rather than laid out with flex, so the label can stay pinned to the arrow's base edge as it
++     rotates instead of drifting - a flex-column layout doesn't know about the glyph's rotation. */
++}
++
++.offscreen-indicator[hidden] {
++  display: none;
++}
++
++.offscreen-indicator-glyph {
++  /* A single ISOSCELES triangle (narrow base, tall height - not the previous roughly-equilateral
++     one, which read as too short/stubby), pointing straight up by default - rotated per-frame in
++     JS (translate(-50%,-50%) rotate(angle), see offscreenIndicators.ts) to point toward the
++     target. Border-triangle trick: a zero-size box whose only visible parts are its angled
++     borders. `color` is set inline per-body (see OffscreenIndicatorUI) to match that body's own
++     orbit line - border-bottom-color below inherits it via currentColor. */
++  position: absolute;
++  top: 0;
++  left: 0;
++  width: 0;
++  height: 0;
++  border-left: 5px solid transparent;
++  border-right: 5px solid transparent;
++  border-bottom: 22px solid currentColor;
++  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
++}
++
++.offscreen-indicator-label {
++  /* Positioned per-frame in JS (translate(-50%,-50%) translate(baseX, baseY), see
++     offscreenIndicators.ts) offset from center toward the arrow's base/trailing side - never
++     rotated itself, so the text always reads perfectly horizontally regardless of which way the
++     arrow points ("label should be pinned to base but printed perfectly horizontally"). */
++  position: absolute;
++  top: 0;
++  left: 0;
++  font-family: system-ui, sans-serif;
++  font-size: 9px;
++  font-weight: 600;
++  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
++  white-space: nowrap;
++}
+diff --git a/src/terrain/heightfield.ts b/src/terrain/heightfield.ts
+index 4318825..34f2aa1 100644
+--- a/src/terrain/heightfield.ts
++++ b/src/terrain/heightfield.ts
+@@ -3,7 +3,7 @@ import { Fbm3 } from "./noise";
+ import { TOPOLOGIES } from "./topology";
+ import { mulberry32 } from "./prng";
+ import { smoothstep } from "./mathUtils";
+-import type { HeightmapImageData } from "./heightmapImage";
++import type { ColorImageData, HeightmapImageData } from "./heightmapImage";
+ 
+ interface BiomeSeed {
+   x: number;
+@@ -34,6 +34,7 @@ export class PlanetHeightfield {
+   private readonly fbm: Fbm3;
+   private readonly seeds: BiomeSeed[] = [];
+   private image: HeightmapImageData | null = null;
++  private colorImage: ColorImageData | null = null;
+ 
+   constructor(seed: number) {
+     this.fbm = new Fbm3(seed, 5, 2.05, 0.48);
+@@ -58,6 +59,29 @@ export class PlanetHeightfield {
+     this.image = image;
+   }
+ 
++  /** Switches this heightfield to sample a real color image (see colorAt) - call once, after
++   * construction, when the body's real color texture has finished loading. Independent of
++   * useImage: a body can have real elevation without real color (or, in principle, vice
++   * versa) - see COLOR_MAP_SOURCES/HEIGHTMAP_SOURCES in scale.ts. */
++  useColorImage(image: ColorImageData): void {
++    this.colorImage = image;
++  }
++
++  get hasColorImage(): boolean {
++    return this.colorImage !== null;
++  }
++
++  /** Equirectangular convention matching the source photos: y is the polar axis, row 0 is the
++   * north pole, and longitude increases eastward from an arbitrary prime meridian (this game
++   * has no notion of a "real" Greenwich to align to, so any fixed convention is fine as long
++   * as it's used consistently for a given body). Shared by elevationFromImage and colorAt so
++   * a body's color and elevation images always sample in perfect alignment. */
++  private static latLonUV(dir: Vector3): { u: number; v: number } {
++    const lat = Math.asin(Math.max(-1, Math.min(1, dir.y)));
++    const lon = Math.atan2(dir.z, dir.x);
++    return { u: lon / (Math.PI * 2) + 0.5, v: 0.5 - lat / Math.PI };
++  }
++
+   /** Elevation above/below the base planet radius, in meters, at a unit sphere direction. */
+   elevationAt(dir: Vector3): number {
+     if (this.image) return this.elevationFromImage(this.image, dir);
+@@ -65,14 +89,7 @@ export class PlanetHeightfield {
+   }
+ 
+   private elevationFromImage(image: HeightmapImageData, dir: Vector3): number {
+-    // Equirectangular convention matching the source photos: y is the polar axis, row 0 is
+-    // the north pole, and longitude increases eastward from an arbitrary prime meridian (this
+-    // game has no notion of a "real" Greenwich to align to, so any fixed convention is fine as
+-    // long as it's used consistently for a given body).
+-    const lat = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+-    const lon = Math.atan2(dir.z, dir.x);
+-    const u = lon / (Math.PI * 2) + 0.5;
+-    const v = 0.5 - lat / Math.PI;
++    const { u, v } = PlanetHeightfield.latLonUV(dir);
+ 
+     const fx = u * image.width;
+     const fy = v * (image.height - 1);
+@@ -90,6 +107,34 @@ export class PlanetHeightfield {
+     return (t - 0.5) * 2 * IMAGE_AMPLITUDE_METERS;
+   }
+ 
++  /** Real color (0-1 per channel) at a unit sphere direction, from the image passed to
++   * useColorImage - only meaningful when hasColorImage is true. Bilinear + antimeridian wrap,
++   * identical in shape to elevationFromImage (and built on the exact same latLonUV formula),
++   * so color and elevation are always sampled from the same point on the body. */
++  colorAt(dir: Vector3, out: { r: number; g: number; b: number }): void {
++    const image = this.colorImage!;
++    const { u, v } = PlanetHeightfield.latLonUV(dir);
++
++    const fx = u * image.width;
++    const fy = v * (image.height - 1);
++    const x0 = Math.floor(fx) % image.width;
++    const x1 = (x0 + 1) % image.width;
++    const y0 = Math.max(0, Math.min(image.height - 1, Math.floor(fy)));
++    const y1 = Math.max(0, Math.min(image.height - 1, y0 + 1));
++    const tx = fx - Math.floor(fx);
++    const ty = fy - y0;
++
++    const sample = (x: number, y: number, channel: number) => image.pixels[(y * image.width + x) * 4 + channel] / 255;
++    for (let channel = 0; channel < 3; channel++) {
++      const top = sample(x0, y0, channel) * (1 - tx) + sample(x1, y0, channel) * tx;
++      const bottom = sample(x0, y1, channel) * (1 - tx) + sample(x1, y1, channel) * tx;
++      const value = top * (1 - ty) + bottom * ty;
++      if (channel === 0) out.r = value;
++      else if (channel === 1) out.g = value;
++      else out.b = value;
++    }
++  }
++
+   private elevationFromNoise(dir: Vector3): number {
+     let d0 = Infinity;
+     let d1 = Infinity;
+diff --git a/src/terrain/heightmapImage.ts b/src/terrain/heightmapImage.ts
+index 5cb5670..84acc2b 100644
+--- a/src/terrain/heightmapImage.ts
++++ b/src/terrain/heightmapImage.ts
+@@ -7,6 +7,16 @@ export interface HeightmapImageData {
+   samples: Uint8ClampedArray;
+ }
+ 
++/** A loaded real color/diffuse map, resampled to a specific target resolution - see
++ * loadColorImage(). Same equirectangular convention as HeightmapImageData (row 0 = north
++ * pole) so a body's color and elevation images always sample in alignment. */
++export interface ColorImageData {
++  width: number;
++  height: number;
++  /** RGBA, one byte per channel per pixel, row-major, top row = north pole. */
++  pixels: Uint8ClampedArray;
++}
++
+ function loadImage(url: string): Promise<HTMLImageElement> {
+   return new Promise((resolve, reject) => {
+     const img = new Image();
+@@ -44,3 +54,19 @@ export async function loadHeightmapImage(url: string, targetWidth: number, targe
+   }
+   return { width: targetWidth, height: targetHeight, samples };
+ }
++
++/**
++ * Loads a real equirectangular color/diffuse image, resampled (via the same offscreen-canvas
++ * approach as loadHeightmapImage) to `targetWidth`x`targetHeight` - keeps the full RGBA data
++ * instead of collapsing to grayscale, for PlanetHeightfield.colorAt to sample per-vertex.
++ */
++export async function loadColorImage(url: string, targetWidth: number, targetHeight: number): Promise<ColorImageData> {
++  const img = await loadImage(url);
++  const canvas = document.createElement("canvas");
++  canvas.width = targetWidth;
++  canvas.height = targetHeight;
++  const ctx = canvas.getContext("2d")!;
++  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
++  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
++  return { width: targetWidth, height: targetHeight, pixels: new Uint8ClampedArray(imageData.data) };
++}
+diff --git a/src/terrain/mathUtils.ts b/src/terrain/mathUtils.ts
+index 3fa50c9..85dc36f 100644
+--- a/src/terrain/mathUtils.ts
++++ b/src/terrain/mathUtils.ts
+@@ -11,6 +11,10 @@ export function lerp(a: number, b: number, t: number): number {
+   return a + (b - a) * t;
+ }
+ 
++export function easeInOutCubic(t: number): number {
++  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
++}
++
+ /** Deterministic hash of 3 integers/floats into [0, 1). */
+ export function hash3(x: number, y: number, z: number): number {
+   const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453123;
+diff --git a/src/terrain/patchMesh.ts b/src/terrain/patchMesh.ts
+index e77df14..a6101a2 100644
+--- a/src/terrain/patchMesh.ts
++++ b/src/terrain/patchMesh.ts
+@@ -11,16 +11,31 @@ export interface PatchMeshData {
+ }
+ 
+ const scratch = new Vector3();
++const scratchColor = { r: 0, g: 0, b: 0 };
+ 
+ // Default heightmap convention: black = lowest point, white = highest point. A plain
+ // grayscale gradient rather than the earlier sand/rust palette - makes the actual height
+ // data trivially readable at a glance, and gives Phase 5's terrain shader a clean starting
+-// signal to key its texture blending off of.
++// signal to key its texture blending off of. Used as-is for any body with no real color
++// texture (see COLOR_MAP_SOURCES in scale.ts) - not just a placeholder anymore, but a
++// deliberate, honest fallback for bodies with no real color data (Venus, Eris, Pluto - see
++// public/textures/SOURCES.md).
+ function colorForElevation(elevation: number, out: number[]) {
+   const t = Math.min(1, Math.max(0, (elevation + 15) / 55));
+   out.push(t, t, t, 1);
+ }
+ 
++/** Real color when the heightfield has one loaded (see PlanetHeightfield.useColorImage),
++ * otherwise the same elevation-grayscale fallback as always. */
++function colorForVertex(dir: Vector3, elevation: number, heightfield: PlanetHeightfield, out: number[]) {
++  if (heightfield.hasColorImage) {
++    heightfield.colorAt(dir, scratchColor);
++    out.push(scratchColor.r, scratchColor.g, scratchColor.b, 1);
++  } else {
++    colorForElevation(elevation, out);
++  }
++}
++
+ /**
+  * Builds a heightfield-displaced grid mesh for one quadtree patch, in face-local UV space
+  * `[u0, u0+size] x [v0, v0+size]`. Adds a downward skirt on all 4 borders so neighboring
+@@ -57,7 +72,7 @@ export function buildPatchMesh(
+       extPositions.push(scratch.x * r, scratch.y * r, scratch.z * r);
+       if (i >= 0 && i < res && j >= 0 && j < res) {
+         uvs.push(i / (res - 1), j / (res - 1));
+-        colorForElevation(elevation, colors);
++        colorForVertex(scratch, elevation, heightfield, colors);
+       }
+     }
+   }
+diff --git a/src/terrain/planetTerrain.ts b/src/terrain/planetTerrain.ts
+index e6f1e17..df7c96c 100644
+--- a/src/terrain/planetTerrain.ts
++++ b/src/terrain/planetTerrain.ts
+@@ -7,8 +7,17 @@ import { graphicsSettings } from "../settings/graphicsSettings";
+ import { AU_IN_SCENE_UNITS } from "../solarSystem/scale";
+ 
+ const MAX_DEPTH = 9;
+-const SPLIT_FACTOR = 2.0;
+-const MERGE_FACTOR = 2.6;
++/** Raised from 2.0 ("planets need to be full resolution at 5000 or less away") - patches now
++ * split noticeably sooner relative to their own size, reaching meaningfully finer detail at
++ * typical orbit-viewing distances instead of only within a few dozen units of the surface.
++ * Empirically measured (not purely derived): a single global multiplier here can't make MAX_DEPTH
++ * (9) itself reachable at an absolute distance like 5000 without exploding patch count/GPU cost
++ * (verified live: SPLIT_FACTOR=12 dropped FPS from ~50 to ~11 at 1000 units above Earth's
++ * surface) - this value is the highest that stayed comfortably playable (~30fps) in that same
++ * test. Reaching genuinely full resolution at 5000 for a body this size would need a different,
++ * non-geometric LOD curve (e.g. true screen-space error), not just a bigger constant here. */
++const SPLIT_FACTOR = 4.0;
++const MERGE_FACTOR = 5.2; // same 1.3x hysteresis ratio over SPLIT_FACTOR as before (2.6/2.0)
+ const MAX_PATCHES_PER_FRAME = 3;
+ /** Depth cap used only when graphicsSettings.forceMaxTerrainDetail is on ("what does full detail
+  * look like from far away") - deliberately much lower than MAX_DEPTH. Forcing the REAL max depth
+@@ -57,6 +66,9 @@ export class PlanetTerrain {
+   private readonly planetRadius: number;
+   private readonly parentNode: TransformNode | null;
+   private readonly patchResolution: number;
++  // TEMP DEBUG fields - remove alongside the update()/visit() logging once diagnosed.
++  private debugMaxVisibleDepth = 0;
++  private debugLastLogTime = 0;
+ 
+   constructor(scene: Scene, planetRadius: number, seed: number, parentNode: TransformNode | null = null) {
+     this.scene = scene;
+@@ -95,9 +107,18 @@ export class PlanetTerrain {
+     // body's center, no extra computation needed. Depends only on this, not any individual
+     // patch, so it's the same for every patch this frame - computed once here, not per-visit().
+     const globalMaxDepth = maxDepthForDistance(cameraPosition.length());
++    this.debugMaxVisibleDepth = 0;
+     for (const root of this.roots) {
+       this.visit(root, cameraPosition, globalMaxDepth);
+     }
++    // TEMP DEBUG - remove once the LOD-not-increasing report is diagnosed.
++    const now = performance.now();
++    if (now - this.debugLastLogTime > 1000) {
++      this.debugLastLogTime = now;
++      console.log(
++        `[LOD DEBUG] cameraDist=${cameraPosition.length().toFixed(0)} globalMaxDepth=${globalMaxDepth} maxVisibleLeafDepth=${this.debugMaxVisibleDepth} pendingGenQueue=${this.generationQueue.length} forceMaxDetail=${graphicsSettings.forceMaxTerrainDetail}`,
++      );
++    }
+   }
+ 
+   private processGenerationQueue(): void {
+@@ -154,6 +175,7 @@ export class PlanetTerrain {
+           // footprint with zero enabled meshes: a one-frame gap that reads as a missing
+           // square/flicker during camera movement (reproduced headlessly - see git history).
+           node.mesh.setEnabled(true);
++          this.debugMaxVisibleDepth = Math.max(this.debugMaxVisibleDepth, node.depth); // TEMP DEBUG
+           this.disposeChildren(node);
+         } else {
+           node.mesh.setEnabled(false);
+@@ -164,12 +186,14 @@ export class PlanetTerrain {
+         }
+       } else {
+         node.mesh.setEnabled(true);
++        this.debugMaxVisibleDepth = Math.max(this.debugMaxVisibleDepth, node.depth); // TEMP DEBUG
+         for (const child of node.children) {
+           child.mesh?.setEnabled(false);
+         }
+       }
+     } else {
+       node.mesh.setEnabled(true);
++      this.debugMaxVisibleDepth = Math.max(this.debugMaxVisibleDepth, node.depth); // TEMP DEBUG
+       const maxDepth = forceMaxDetail ? FORCE_DETAIL_MAX_DEPTH : Math.min(MAX_DEPTH, globalMaxDepth);
+       const shouldSplit = forceMaxDetail || distance < node.boundingRadius * SPLIT_FACTOR;
+       if (shouldSplit && node.depth < maxDepth) {
+diff --git a/src/ui/bodyIcons.ts b/src/ui/bodyIcons.ts
+index 93dc85c..ebc2159 100644
+--- a/src/ui/bodyIcons.ts
++++ b/src/ui/bodyIcons.ts
+@@ -5,12 +5,13 @@ import { AU_IN_SCENE_UNITS } from "../solarSystem/scale";
+ const tmpIdentity = Matrix.Identity(); // world matrix for Project() - bodies' positions are already in world space
+ 
+ /**
+- * Small clickable billboard icon + name label for each body, shown only once it's farther than
+- * 1 AU from the camera - "I still havent seen any billboard sprites to show you planets and
++ * Small clickable billboard icon + name label for every body currently on screen - "put labels
++ * on all planets all the time". The dot marker itself only shows once a body is farther than 1
++ * AU from the camera, though - "I still havent seen any billboard sprites to show you planets and
+  * objects more than 1 AU away ... so I can see Venus, Mars, Earth all as icons when I'm way out
+- * by Jupiter". A real 3D body is already visually negligible at that range (its actual angular
+- * size on screen is sub-pixel at typical body radii vs multi-AU viewing distances), so this
+- * doesn't bother hiding the real mesh underneath - just overlays a marker on top of it.
++ * by Jupiter" - a real 3D body is already visually negligible at that range (its actual angular
++ * size on screen is sub-pixel at typical body radii vs multi-AU viewing distances), so the dot
++ * stands in for it; up close the real mesh is already right there, so only the label persists.
+  *
+  * Reuses the same screen-space DOM-overlay technique as the selection reticle/hover label
+  * (project world position -> screen, position a plain HTML element there) rather than a Babylon
+@@ -68,11 +69,6 @@ export class BodyIconsUI {
+     for (let i = 0; i < this.solarSystem.bodies.length; i++) {
+       const el = this.icons[i];
+       const worldPos = this.solarSystem.bodies[i].orbit.spinNode.getAbsolutePosition();
+-      const distance = Vector3.Distance(camPos, worldPos);
+-      if (distance <= AU_IN_SCENE_UNITS) {
+-        el.hidden = true;
+-        continue;
+-      }
+ 
+       // Same robust "in front of the camera" check as the selection reticle - projected clip
+       // space z alone isn't reliable for this (see SelectionUI's own comment).
+@@ -89,6 +85,11 @@ export class BodyIconsUI {
+       }
+ 
+       el.hidden = false;
++      // Only the dot stands in for the real body once it's too far away to see - up close the
++      // actual mesh is already visible, so showing the dot too would just be a redundant marker
++      // floating in front of it.
++      const distance = Vector3.Distance(camPos, worldPos);
++      el.classList.toggle("body-icon-close", distance <= AU_IN_SCENE_UNITS);
+       el.style.transform = `translate(${screenPos.x}px, ${screenPos.y}px) translate(-50%, -50%)`;
+     }
+   }
+diff --git a/src/ui/offscreenIndicators.ts b/src/ui/offscreenIndicators.ts
+new file mode 100644
+index 0000000..1886808
+--- /dev/null
++++ b/src/ui/offscreenIndicators.ts
+@@ -0,0 +1,146 @@
++import { Matrix, Vector3, type AbstractEngine, type Scene } from "@babylonjs/core";
++import { orbitLineColorFor, type SolarSystem } from "../solarSystem/solarSystem";
++
++/** Kept off the very edge of the viewport so the arrow's own size doesn't get clipped. */
++const EDGE_MARGIN_PX = 28;
++/** Matches the arrow glyph's own alpha (see the CSS) - applied here too since the label's color
++ * is set inline per-body and can't just inherit the CSS rule's opacity/color the glyph uses.
++ * "80% transparent" = 0.2 alpha (20% opaque). */
++const ARROW_ALPHA = 0.2;
++/** Distance in px from the glyph's own center to the label's anchor point, on the arrow's
++ * base/trailing side (opposite the direction it points) - "label should be pinned to base".
++ * Just past the triangle's own half-height (11px, see .offscreen-indicator-glyph's border-bottom)
++ * plus a small gap. */
++const LABEL_OFFSET_PX = 16;
++
++const tmpIdentity = Matrix.Identity(); // world matrix for ProjectToRef() - bodies' positions are already in world space
++const tmpToBody = new Vector3();
++const tmpForward = new Vector3();
++const tmpRight = new Vector3();
++const tmpUp = new Vector3();
++const tmpScreenPos = new Vector3();
++
++/**
++ * Space-fighter-game-style off-screen indicators: an arrow pinned to whichever screen edge is
++ * closest to the direction of every planet/moon currently NOT in view (off to the side, or
++ * behind the camera), rotated to point the way you'd need to turn to find it - "arrows on the
++ * sides of the screen showing where to point to find the other planets and moons". Independent
++ * of BodyIconsUI (which only ever shows bodies farther than 1 AU, in-frame, too small to see as
++ * a real mesh) - this covers every body at every distance, exactly when it's NOT already visibly
++ * on screen some other way.
++ *
++ * The on/off-screen check reuses the same Vector3.ProjectToRef() + in-front-of-camera test the
++ * selection reticle and BodyIconsUI already rely on. Positioning the arrow itself, though, works
++ * in the camera's own local right/up basis instead of a real screen projection: the angle a
++ * target sits at around the camera's forward axis (from local right/up components alone,
++ * ignoring depth) is exactly the angle you'd need to turn toward it, whether it's off to the
++ * side or directly behind you - a real perspective projection would flip to the wrong side of
++ * the screen for anything behind the camera, which this sidesteps entirely.
++ */
++export class OffscreenIndicatorUI {
++  private readonly solarSystem: SolarSystem;
++  private readonly scene: Scene;
++  private readonly engine: AbstractEngine;
++  private readonly arrows: HTMLElement[] = [];
++
++  constructor(solarSystem: SolarSystem, scene: Scene, engine: AbstractEngine) {
++    this.solarSystem = solarSystem;
++    this.scene = scene;
++    this.engine = engine;
++
++    const layerEl = document.getElementById("offscreenIndicatorLayer")!;
++    for (const body of solarSystem.bodies) {
++      // Same per-body color as this body's own orbit line (orbitLineColorFor is keyed off the
++      // same seed) - "change arrow colors to match orbit line color" - applied to both the
++      // glyph and the label (a plain CSS color/border-color can't reach a color picked
++      // per-element like this, so it's set inline here once rather than every frame).
++      const color = orbitLineColorFor(body.def.seed);
++      const rgba = `rgba(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)}, ${ARROW_ALPHA})`;
++
++      const el = document.createElement("div");
++      el.className = "offscreen-indicator";
++      el.hidden = true;
++      const glyph = document.createElement("span");
++      glyph.className = "offscreen-indicator-glyph";
++      glyph.style.color = rgba; // border-bottom-color inherits this via currentColor
++      const label = document.createElement("span");
++      label.className = "offscreen-indicator-label";
++      label.textContent = body.def.name;
++      label.style.color = rgba;
++      el.appendChild(glyph);
++      el.appendChild(label);
++      layerEl.appendChild(el);
++      this.arrows.push(el);
++    }
++  }
++
++  /** Call once per frame. */
++  update(): void {
++    const camera = this.scene.activeCamera;
++    if (!camera) return;
++
++    const camPos = camera.globalPosition;
++    camera.getDirectionToRef(Vector3.LeftHandedForwardReadOnly, tmpForward);
++    camera.getDirectionToRef(Vector3.RightReadOnly, tmpRight);
++    camera.getDirectionToRef(Vector3.UpReadOnly, tmpUp);
++    const viewport = camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
++    const transform = this.scene.getTransformMatrix();
++    const width = this.engine.getRenderWidth();
++    const height = this.engine.getRenderHeight();
++    const halfWidth = width / 2 - EDGE_MARGIN_PX;
++    const halfHeight = height / 2 - EDGE_MARGIN_PX;
++
++    for (let i = 0; i < this.solarSystem.bodies.length; i++) {
++      const el = this.arrows[i];
++      const worldPos = this.solarSystem.bodies[i].orbit.spinNode.getAbsolutePosition();
++      worldPos.subtractToRef(camPos, tmpToBody);
++
++      const inFront = Vector3.Dot(tmpToBody, tmpForward) > 0;
++      if (inFront) {
++        Vector3.ProjectToRef(worldPos, tmpIdentity, transform, viewport, tmpScreenPos);
++        if (tmpScreenPos.x >= 0 && tmpScreenPos.x <= viewport.width && tmpScreenPos.y >= 0 && tmpScreenPos.y <= viewport.height) {
++          // On screen and in front - the real mesh (or BodyIconsUI's own far-away marker)
++          // already shows it, no indicator needed.
++          el.hidden = true;
++          continue;
++        }
++      }
++
++      // Direction to turn toward, in screen terms (right/down) - the local right/up components
++      // of tmpToBody alone (ignoring depth/forward entirely) give exactly this, whether the body
++      // is off to the side or behind the camera - see the class doc comment for why. Down
++      // because DOM Y increases downward while camera "up" is the opposite sense.
++      let dx = Vector3.Dot(tmpToBody, tmpRight);
++      let dy = -Vector3.Dot(tmpToBody, tmpUp);
++      if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) dy = -1; // dead-on behind with no lateral bias at all - default to "up"
++
++      // Ray-from-center-to-rectangle-edge intersection: scale (dx, dy) so whichever axis hits
++      // its half-extent first lands exactly on that edge.
++      const scale = Math.min(Math.abs(dx) > 1e-6 ? halfWidth / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-6 ? halfHeight / Math.abs(dy) : Infinity);
++      const edgeX = dx * scale;
++      const edgeY = dy * scale;
++      const angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 = up, clockwise - matches the glyph's default pointing-up orientation
++      const rad = (angleDeg * Math.PI) / 180;
++      // Unit vector the arrow points toward (screen space, 0deg = up = (0,-1)) - the label sits
++      // on the OPPOSITE side (the base/trailing side), never rotated itself, so it stays
++      // horizontal while still tracking the arrow's rotation ("pinned to base but printed
++      // perfectly horizontally").
++      const tipX = Math.sin(rad);
++      const tipY = -Math.cos(rad);
++      const baseX = -tipX * LABEL_OFFSET_PX;
++      const baseY = -tipY * LABEL_OFFSET_PX;
++      // Anchor the label's own near corner (not its center) at the base point, so it always
++      // extends AWAY from the glyph rather than straddling it - centering here would let long
++      // names overlap/hide behind the triangle on left/up-pointing arrows.
++      const anchorX = baseX >= 0 ? "0%" : "-100%";
++      const anchorY = baseY >= 0 ? "0%" : "-100%";
++
++      el.hidden = false;
++      el.style.transform = `translate(${width / 2 + edgeX}px, ${height / 2 + edgeY}px) translate(-50%, -50%)`;
++      const glyph = el.firstElementChild as HTMLElement;
++      const label = el.lastElementChild as HTMLElement;
++      glyph.style.transform = `translate(-50%, -50%) rotate(${angleDeg}deg)`;
++      label.style.transform = `translate(${anchorX}, ${anchorY}) translate(${baseX}px, ${baseY}px)`;
++    }
++  }
++}
+diff --git a/src/ui/selection.ts b/src/ui/selection.ts
+index 7b72d8e..0e14c9b 100644
+--- a/src/ui/selection.ts
++++ b/src/ui/selection.ts
+@@ -1,9 +1,16 @@
+ import { AbstractEngine, Matrix, type Node, type PickingInfo, Scene, Vector3 } from "@babylonjs/core";
+ import type { SolarSystem } from "../solarSystem/solarSystem";
++import type { CelestialBody } from "../solarSystem/celestialBody";
+ import type { FreeFlyCamera } from "../camera/freeFlyCamera";
+ import type { EconomyManager } from "../economy/economyManager";
++import type { Base } from "../economy/base";
++import type { Station } from "../economy/station";
++import { BODY_DEFS, actualSceneDistance } from "../solarSystem/scale";
+ 
+-const FREE_CAM_PICK_DISTANCE = 1_000_000; // comfortably past the outermost body's orbit
++// Same "farthest body's Actual-scale distance, with margin" formula as main.ts's FAR_CLIP, so the
++// reticle ray always reaches every body even once Actual scale mode pushes Pluto/Eris out past a
++// fixed 1,000,000-unit ray length.
++const FREE_CAM_PICK_DISTANCE = Math.max(...BODY_DEFS.map((b) => actualSceneDistance(b.auDistance))) * 1.4;
+ 
+ const CLICK_MOVE_THRESHOLD_PX = 6;
+ const MIN_RETICLE_SIZE = 24;
+@@ -12,15 +19,32 @@ const tmpInvMatrix = new Matrix();
+ const tmpLocalPoint = new Vector3();
+ const tmpEntityPos = new Vector3();
+ 
+-/** A selected ship or asteroid - deliberately decoupled from Ship/AsteroidBelt's own shapes
+- * (just "a name" and "a way to get its current world position each frame"), same spirit as the
+- * economy layer's own Dockable interface, so this class doesn't need to know their internals. */
++/** A selected ship, asteroid, base, or station - deliberately decoupled from those classes' own
++ * shapes (just "a name" and "a way to get its current world position each frame"), same spirit
++ * as the economy layer's own Dockable interface, so this class doesn't need to know their
++ * internals. */
+ export type SelectedEntity = {
+-  kind: "ship" | "asteroid";
++  kind: "ship" | "asteroid" | "base" | "station";
+   name: string;
+   getWorldPosition: () => Vector3;
+ };
+ 
++/**
++ * One level of the breadcrumb focus browser (see BreadcrumbNode's own class doc comment on
++ * SelectionUI): "Sol" at the root, its planets/dwarf planets as children, each of those bodies'
++ * moons and docked Bases/Stations as ITS children, and so on - generic over what's actually at
++ * each level so adding a deeper tier later (e.g. a future city on a moon) is just a new
++ * BreadcrumbNode source, not a rewrite of the browser itself.
++ */
++interface BreadcrumbNode {
++  readonly label: string;
++  /** Selects this node as the current target/entity (see SelectionUI.setTarget/setSelectedEntity)
++   * - null for a node with nothing meaningful to select (the root "Sol" entry, which exists only
++   * to be drilled into). */
++  readonly select: (() => void) | null;
++  readonly children: () => BreadcrumbNode[];
++}
++
+ function digitFromCode(code: string): number | null {
+   const match = /^Digit(\d)$/.exec(code);
+   return match ? parseInt(match[1], 10) : null;
+@@ -50,6 +74,7 @@ export class SelectionUI {
+   private readonly freeFlyCamera: FreeFlyCamera;
+   private readonly isFreeCamActive: () => boolean;
+   private readonly focusListEl: HTMLElement;
++  private readonly focusListTitleEl: HTMLElement;
+   private readonly focusListItemsEl: HTMLOListElement;
+   private readonly reticleEl: HTMLElement;
+   private readonly reticleLabelEl: HTMLElement;
+@@ -61,6 +86,13 @@ export class SelectionUI {
+   private readonly isInputLocked: () => boolean;
+   private readonly canvas: HTMLCanvasElement;
+   private listOpen = false;
++  /** The breadcrumb trail currently drilled into - always starts at [rootNode] on open (see
++   * openList) - the LAST entry's own .children() is what's currently rendered as the numbered
++   * list; the full trail (entry.label joined by " > ") is the header text above it. */
++  private breadcrumbPath: BreadcrumbNode[] = [];
++  /** The current breadcrumb level's own children (set by renderBreadcrumbLevel) - what a digit
++   * press in onKeyDown actually indexes into. */
++  private currentChildren: BreadcrumbNode[] = [];
+   private pointerDownX = 0;
+   private pointerDownY = 0;
+   /** Tracked ourselves via a real pointermove listener, rather than trusting Babylon's own
+@@ -92,13 +124,13 @@ export class SelectionUI {
+     this.isInputLocked = isInputLocked;
+     this.canvas = canvas;
+     this.focusListEl = document.getElementById("focusList")!;
++    this.focusListTitleEl = document.getElementById("focusListTitle")!;
+     this.focusListItemsEl = document.getElementById("focusListItems") as HTMLOListElement;
+     this.reticleEl = document.getElementById("reticle")!;
+     this.reticleLabelEl = document.getElementById("reticleLabel")!;
+     this.orbitFocusLabelEl = document.getElementById("orbitFocusLabel")!;
+     this.hoverLabelEl = document.getElementById("hoverLabel")!;
+ 
+-    this.populateList();
+     window.addEventListener("keydown", (e) => this.onKeyDown(e));
+     canvas.addEventListener("pointerdown", (e) => this.onPointerDown(e));
+     canvas.addEventListener("pointerup", (e) => this.onPointerUp(e));
+@@ -121,21 +153,66 @@ export class SelectionUI {
+     return { x: clientX - rect.left, y: clientY - rect.top };
+   }
+ 
+-  private populateList(): void {
++  private buildDockableNode(dockable: Base | Station): BreadcrumbNode {
++    return {
++      label: dockable.def.name,
++      select: () =>
++        this.setSelectedEntity({ kind: dockable.kind, name: dockable.def.name, getWorldPosition: () => dockable.mesh.getAbsolutePosition() }),
++      children: () => [],
++    };
++  }
++
++  private buildBodyNode(body: CelestialBody): BreadcrumbNode {
++    return {
++      label: body.def.name,
++      select: () => this.setTarget(this.solarSystem.bodies.indexOf(body)),
++      children: () => {
++        const moons = this.solarSystem.bodies.filter((b) => b.def.orbitsAround === body.def.name).map((m) => this.buildBodyNode(m));
++        const dockables = this.getEconomyManager()
++          .getDockablesForBody(body.def.name)
++          .map((d) => this.buildDockableNode(d));
++        return [...moons, ...dockables];
++      },
++    };
++  }
++
++  /** A synthetic top level whose only child is "Sol" itself - matches the requested UX ("so only
++   * 1. Sol appears" when the list first opens; pressing 1 descends into Sol's own children, the
++   * star-orbiting planets/dwarf planets) rather than jumping straight to the planet list. */
++  private buildRootNode(): BreadcrumbNode {
++    return {
++      label: "",
++      select: null,
++      children: () => [
++        {
++          label: "Sol",
++          select: null,
++          children: () => this.solarSystem.bodies.filter((b) => !b.def.orbitsAround).map((b) => this.buildBodyNode(b)),
++        },
++      ],
++    };
++  }
++
++  /** Renders the LAST breadcrumbPath entry's own children as the numbered list, and the full
++   * trail (excluding the synthetic root's blank label) as the header above it. */
++  private renderBreadcrumbLevel(): void {
++    this.focusListTitleEl.textContent = this.breadcrumbPath.map((n) => n.label).filter(Boolean).join(" > ");
++    this.currentChildren = this.breadcrumbPath[this.breadcrumbPath.length - 1].children();
+     this.focusListItemsEl.innerHTML = "";
+-    for (const body of this.solarSystem.bodies) {
++    const focusedName = this.solarSystem.focused.def.name;
++    for (const child of this.currentChildren) {
+       const li = document.createElement("li");
+-      li.textContent = body.def.name;
++      li.textContent = child.label;
++      li.classList.toggle("is-focused", child.label === focusedName);
+       this.focusListItemsEl.appendChild(li);
+     }
+   }
+ 
+   private openList(): void {
+     this.listOpen = true;
++    this.breadcrumbPath = [this.buildRootNode()];
+     this.focusListEl.hidden = false;
+-    for (let i = 0; i < this.focusListItemsEl.children.length; i++) {
+-      this.focusListItemsEl.children[i].classList.toggle("is-focused", i === this.solarSystem.focusedIndex);
+-    }
++    this.renderBreadcrumbLevel();
+   }
+ 
+   private closeList(): void {
+@@ -150,12 +227,29 @@ export class SelectionUI {
+       return;
+     }
+     if (e.code === "Escape") {
+-      this.closeList();
++      // Back up one level (breadcrumbPath.length > 1, i.e. deeper than the initial "1. Sol"
++      // screen) rather than closing outright - "if they press ESC it goes up to previous level".
++      if (this.breadcrumbPath.length > 1) {
++        this.breadcrumbPath.pop();
++        this.renderBreadcrumbLevel();
++      } else {
++        this.closeList();
++      }
+       return;
+     }
+     const digit = digitFromCode(e.code);
+-    if (digit !== null && digit >= 1 && digit <= this.solarSystem.bodies.length) {
+-      this.setTarget(digit - 1);
++    if (digit === null) return;
++    // Digit1..Digit9 -> slots 0..8, Digit0 -> slot 9 (a 10th slot - star-orbiting bodies alone
++    // already number 10, one more than single-digit keys 1-9 can address on their own).
++    const slotIndex = digit === 0 ? 9 : digit - 1;
++    const child = this.currentChildren[slotIndex];
++    if (!child) return;
++    child.select?.();
++    const grandchildren = child.children();
++    if (grandchildren.length > 0) {
++      this.breadcrumbPath.push(child);
++      this.renderBreadcrumbLevel();
++    } else {
+       this.closeList();
+     }
+   }

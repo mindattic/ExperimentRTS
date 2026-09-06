@@ -1,10 +1,10 @@
 import { Matrix, Quaternion, Scene, UniversalCamera, Vector3 } from "@babylonjs/core";
 import { keybindings } from "../input/keybindings";
 import { computeLookRotationToRef } from "./lookRotation";
+import { applyMouselookDelta, MOUSELOOK_SENSITIVITY, requestPointerLockWithRetry } from "./mouselook";
 
 const MOVE_SPEED = 2400; // units/sec - fast enough to cross interplanetary distances in a reasonable time
 const RUN_MULTIPLIER = 4; // holding Shift
-const LOOK_SENSITIVITY = 0.0025; // radians per pixel of raw mouse movement
 /** Exponential blend rate for reorient() - same idea as OrbitTrackballCamera's RELEVEL_RATE. */
 const REORIENT_RATE = 4.0;
 
@@ -12,7 +12,6 @@ const tmpForward = new Vector3();
 const tmpRight = new Vector3();
 const tmpUp = new Vector3();
 const tmpMove = new Vector3();
-const tmpQuat = new Quaternion();
 const tmpMatrix = new Matrix();
 
 /**
@@ -68,23 +67,6 @@ export class FreeFlyCamera {
     document.addEventListener("pointerlockchange", this.pointerLockChangeHandler);
   }
 
-  /** Requesting Pointer Lock directly from the right-mouse-button pointerdown handler counts as
-   * the user gesture the API requires, and just works. Falls back to retrying on the next
-   * pointerdown if that specific request happens to reject (e.g. a rapid up/down flick racing a
-   * still-pending previous request). */
-  private requestPointerLockWithRetry(): void {
-    const result = this.canvas.requestPointerLock() as unknown;
-    if (result && typeof (result as Promise<void>).catch === "function") {
-      (result as Promise<void>).catch(() => {
-        const retryOnce = () => {
-          this.canvas.removeEventListener("pointerdown", retryOnce);
-          if (!this.cursorModeActive && document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock();
-        };
-        this.canvas.addEventListener("pointerdown", retryOnce);
-      });
-    }
-  }
-
   detach(): void {
     this.keys.clear();
     window.removeEventListener("mousemove", this.mouseMoveHandler);
@@ -123,7 +105,7 @@ export class FreeFlyCamera {
     if (active) {
       if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     } else if (document.pointerLockElement !== this.canvas) {
-      this.requestPointerLockWithRetry();
+      requestPointerLockWithRetry(this.canvas, () => !this.cursorModeActive);
     }
   }
 
@@ -138,30 +120,18 @@ export class FreeFlyCamera {
    * camera's programmatic moves in this codebase) rather than snapping. */
   reorient(): void {
     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
-    Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
+    Vector3.TransformNormalToRef(Vector3.LeftHandedForwardReadOnly, tmpMatrix, tmpForward);
     tmpForward.y = 0;
     if (tmpForward.lengthSquared() < 1e-6) return; // looking almost straight up/down - no well-defined heading to level to
     tmpForward.normalize();
-    computeLookRotationToRef(tmpForward, Vector3.Up(), this.reorientTargetRot);
+    computeLookRotationToRef(tmpForward, Vector3.UpReadOnly, this.reorientTargetRot);
     this.reorienting = true;
   }
 
   private onMouseMove(e: MouseEvent): void {
     if (document.pointerLockElement !== this.canvas) return; // ignore stray moves before lock engages / after it's lost (e.g. user pressed Escape)
     this.reorienting = false; // manual look input always takes over from a programmatic reorient
-    const yaw = e.movementX * LOOK_SENSITIVITY;
-    const pitch = e.movementY * LOOK_SENSITIVITY;
-
-    // Yaw around world up, pitch around the camera's own current right - standard FPS
-    // mouselook, composed directly onto rotationQuaternion (this is the camera's actual
-    // object-space orientation already, not a view matrix, so no inversion is needed here -
-    // contrast with RtsGroundCamera/OrbitTrackballCamera's FromLookDirectionLHToRef usage).
-    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, tmpQuat);
-    this.camera.rotationQuaternion!.multiplyInPlace(tmpQuat);
-    Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
-    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
-    Quaternion.RotationAxisToRef(tmpRight, pitch, tmpQuat);
-    tmpQuat.multiplyToRef(this.camera.rotationQuaternion!, this.camera.rotationQuaternion!);
+    applyMouselookDelta(this.camera.rotationQuaternion!, e.movementX, e.movementY, MOUSELOOK_SENSITIVITY);
   }
 
   update(deltaSeconds: number): void {
@@ -177,9 +147,9 @@ export class FreeFlyCamera {
     }
 
     Matrix.FromQuaternionToRef(this.camera.rotationQuaternion!, tmpMatrix);
-    Vector3.TransformNormalToRef(Vector3.Forward(), tmpMatrix, tmpForward);
-    Vector3.TransformNormalToRef(Vector3.Right(), tmpMatrix, tmpRight);
-    Vector3.TransformNormalToRef(Vector3.Up(), tmpMatrix, tmpUp);
+    Vector3.TransformNormalToRef(Vector3.LeftHandedForwardReadOnly, tmpMatrix, tmpForward);
+    Vector3.TransformNormalToRef(Vector3.RightReadOnly, tmpMatrix, tmpRight);
+    Vector3.TransformNormalToRef(Vector3.UpReadOnly, tmpMatrix, tmpUp);
 
     tmpMove.setAll(0);
     if (this.keys.has(keybindings.get("groundForward"))) tmpMove.addInPlace(tmpForward);

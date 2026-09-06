@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Quicksave transcript (ephemeral, one-shot - see .claude/commands/quicksave.md)
+.claude/quicksave.md

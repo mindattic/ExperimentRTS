@@ -1,6 +1,7 @@
 import { Color3, Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "../solarSystem/celestialBody";
 import { CelestialOrbit } from "../solarSystem/celestialOrbit";
+import { orbitalScale } from "../solarSystem/orbitalScale";
 import { spinPeriodSeconds } from "../solarSystem/scale";
 import type { Dockable } from "./dockable";
 import type { StationDef } from "./economyDefs";
@@ -64,20 +65,30 @@ const STATION_SPIN_SECONDS = 90;
  */
 export class Station implements Dockable {
   readonly id: string;
+  readonly kind = "station";
   readonly def: StationDef;
   readonly orbit: CelestialOrbit;
   readonly parentBody: CelestialBody;
   readonly mesh: Mesh;
+  /** This station's orbit distance at gameplay/actual scale, same pattern as
+   * CelestialBody.gameplaySemiMajorAxis/actualSemiMajorAxis - blended every frame in update() so
+   * the ring keeps sitting "right up against the planet" as the parent's own rendered radius
+   * blends toward actualRadius under the Actual/Gameplay toggle, instead of staying frozen at
+   * whichever radius happened to be current at construction time. */
+  private readonly gameplaySemiMajorAxis: number;
+  private readonly actualSemiMajorAxis: number;
   private spinAngle = Math.random() * Math.PI * 2; // random phase so every station's ring doesn't spin in lockstep
 
   constructor(scene: Scene, def: StationDef, parentBody: CelestialBody) {
     this.id = def.id;
     this.def = def;
     this.parentBody = parentBody;
+    this.gameplaySemiMajorAxis = parentBody.radius * def.orbitRadiusInParentRadii;
+    this.actualSemiMajorAxis = parentBody.actualRadius * def.orbitRadiusInParentRadii;
 
     this.orbit = new CelestialOrbit(scene, {
       name: def.id,
-      semiMajorAxis: parentBody.radius * def.orbitRadiusInParentRadii,
+      semiMajorAxis: this.gameplaySemiMajorAxis,
       eccentricity: 0,
       orbitPeriodSeconds: spinPeriodSeconds(parentBody.def),
       orbitAxis: Vector3.Up(),
@@ -110,6 +121,7 @@ export class Station implements Dockable {
    * decorative spin around that same radial axis (harmless: a torus is rotationally symmetric
    * about its own hole axis, so this never changes which way it faces). */
   update(deltaSeconds: number): void {
+    this.orbit.setSemiMajorAxis(this.gameplaySemiMajorAxis + (this.actualSemiMajorAxis - this.gameplaySemiMajorAxis) * orbitalScale.blend);
     this.spinAngle += deltaSeconds * ((2 * Math.PI) / STATION_SPIN_SECONDS);
     // orbitNode.position is this station's offset from the planet's own orbitNode origin (its
     // parent - see the constructor) - negating and normalizing it points back at the planet.
@@ -121,9 +133,14 @@ export class Station implements Dockable {
 
   /** Composes the parent planet's future position with this station's own future position in
    * the planet's orbit frame - valid because orbitNode only ever translates, never rotates, so
-   * this is a plain vector add, not a matrix transform. */
+   * this is a plain vector add, not a matrix transform. Uses parentBody's own
+   * predictWorldPositionAt (not a direct one-level orbit.predictLocalPositionAt read) so a
+   * station orbiting a MOON (parentBody itself has a parentBody) still composes the full chain -
+   * matching Base.predictWorldPositionAt's own already-recursive pattern - rather than silently
+   * dropping the moon's own offset from its planet. No current STATION_DEFS entry orbits a moon,
+   * but nothing here should assume that stays true. */
   predictWorldPositionAt(secondsFromNow: number, out: Vector3): Vector3 {
-    this.parentBody.orbit.predictLocalPositionAt(secondsFromNow, tmpParentPos);
+    this.parentBody.predictWorldPositionAt(secondsFromNow, tmpParentPos);
     this.orbit.predictLocalPositionAt(secondsFromNow, out);
     out.addInPlace(tmpParentPos);
     return out;

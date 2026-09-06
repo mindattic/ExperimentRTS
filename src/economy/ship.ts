@@ -1,10 +1,11 @@
-import { Color3, Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
+import { Mesh, MeshBuilder, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, type LinesMesh } from "@babylonjs/core";
 import type { Dockable } from "./dockable";
 import type { ShipDef } from "./economyDefs";
 import { FACTION_PALETTES } from "./factions";
 import { createHullMaterial, createShipIconMaterial, hashSeed, HULL_FACE_UV } from "./hullTexture";
 import { buildFlightProfile, computeFlightRotations, evaluateFlightProfile, evaluateFlightRotation, solveRendezvous, type FlightProfile } from "./shipTransit";
 import { EARTH_RADIUS } from "../solarSystem/scale";
+import { createUnlitLineMaterial } from "../solarSystem/celestialOrbit";
 import type { ExaminableInfo } from "../ui/examineUI";
 import { graphicsSettings } from "../settings/graphicsSettings";
 
@@ -25,6 +26,25 @@ const tmpPlannedFrom = new Vector3();
 
 /** Resolves a route-stop id (a Base's bodyName or a Station's id) to its Dockable. */
 export type StopResolver = (id: string) => Dockable;
+
+/** Everything needed to fly (or have flown) one leg: the flight profile itself plus the
+ * destination it's headed to and the prograde/retrograde rotations computed for it - bundled
+ * together so Ship can double-buffer a whole leg at once (planned -> live, see planNextLeg/
+ * departNext) instead of juggling 4 separate mirrored field-pairs. */
+interface FlightLeg {
+  readonly profile: FlightProfile;
+  readonly destination: Dockable;
+  readonly qPrograde: Quaternion;
+  readonly qRetrograde: Quaternion;
+}
+
+function planLeg(from: Vector3, destination: Dockable, arrivalPosition: Vector3, travelSeconds: number): FlightLeg {
+  const profile = buildFlightProfile(from, arrivalPosition, travelSeconds);
+  const qPrograde = new Quaternion();
+  const qRetrograde = new Quaternion();
+  computeFlightRotations(profile, qPrograde, qRetrograde);
+  return { profile, destination, qPrograde, qRetrograde };
+}
 
 /**
  * A ship running a fixed back-and-forth route between Bases/Stations (economyDefs.ts's
@@ -52,8 +72,6 @@ export class Ship {
   etaSeconds = 0;
 
   private readonly scene: Scene;
-  private phase: ShipPhase = "docked";
-  private profile: FlightProfile | null = null;
   private elapsed = 0;
   private dwellRemaining: number;
   private routeIndex: number;
@@ -63,14 +81,14 @@ export class Ship {
    * at the moment of arrival (a station or a surface Base both keep moving while a ship dwells
    * at them). Null while in transit. */
   private currentDock: Dockable | null = null;
-  private currentDestination: Dockable | null = null;
+  /** The leg currently being flown, null while docked - the sole source of truth for `phase`
+   * (see that getter) rather than a separately-tracked flag that could drift out of sync with
+   * it. */
+  private liveLeg: FlightLeg | null = null;
   /** The next leg's rendezvous solution, computed ahead of time by planNextLeg (called the
    * instant this ship docks, or once at construction for its very first departure) - departNext
-   * just consumes these rather than solving anything itself. */
-  private plannedProfile: FlightProfile | null = null;
-  private plannedDestination: Dockable | null = null;
-  private readonly plannedQPrograde = new Quaternion();
-  private readonly plannedQRetrograde = new Quaternion();
+   * just consumes this rather than solving anything itself. */
+  private plannedLeg: FlightLeg | null = null;
   private trajectoryLine: LinesMesh | null = null;
   /** Shared across every trajectory line this ship ever creates (a ship's faction/accent color
    * never changes) - created once in the constructor rather than fresh in departNext() each
@@ -81,8 +99,13 @@ export class Ship {
    * setTrajectoryVisible(). Defaults to graphicsSettings.showShipTrajectories's value at
    * construction; EconomyManager keeps every ship's flag in sync as the setting changes live. */
   private trajectoryVisible: boolean;
-  private readonly qPrograde = new Quaternion();
-  private readonly qRetrograde = new Quaternion();
+
+  /** Derived from liveLeg rather than tracked as its own field - "docked"/"transit" are fully
+   * determined by whether a leg is currently being flown, so a separate flag could only ever
+   * drift out of sync with it (e.g. a future early-return setting one without the other). */
+  private get phase(): ShipPhase {
+    return this.liveLeg !== null ? "transit" : "docked";
+  }
 
   constructor(scene: Scene, def: ShipDef, startDock: Dockable, resolveStop: StopResolver) {
     this.scene = scene;
@@ -109,19 +132,10 @@ export class Ship {
     this.iconMesh.parent = this.root;
     this.iconMesh.setEnabled(false);
 
-    // LinesMesh's own default shader material has no logarithmic-depth support - at this scene's
-    // huge near/far ratio that drew a ship's trajectory in front of/behind planets in the wrong
-    // order ("ship lines aren't ordered right") - same fix already used for orbit lines (see
-    // CelestialOrbit.createOrbitLine's own comment) and asteroids/stations (hullTexture.ts) - a
-    // plain unlit StandardMaterial gets both logarithmic depth and correct alpha blending for free.
-    this.trajectoryMaterial = new StandardMaterial(`${def.id}TrajectoryMaterial`, scene);
-    this.trajectoryMaterial.emissiveColor = FACTION_PALETTES[def.faction].accent;
-    this.trajectoryMaterial.diffuseColor = Color3.Black();
-    this.trajectoryMaterial.specularColor = Color3.Black();
-    this.trajectoryMaterial.disableLighting = true;
-    this.trajectoryMaterial.alpha = 0.5;
-    this.trajectoryMaterial.useLogarithmicDepth = true;
-    this.trajectoryMaterial.backFaceCulling = false;
+    // Same unlit/logarithmic-depth fix CelestialOrbit.createOrbitLine already uses for orbit
+    // lines ("ship lines aren't ordered right" otherwise) - see createUnlitLineMaterial's own
+    // comment.
+    this.trajectoryMaterial = createUnlitLineMaterial(scene, `${def.id}TrajectoryMaterial`, FACTION_PALETTES[def.faction].accent, 0.5);
 
     // Plans its very first departure too, exactly like every subsequent one arrive() plans -
     // dwellRemaining (not def.dwellSeconds) is the actual lead time until it happens.
@@ -130,11 +144,12 @@ export class Ship {
 
   update(deltaSeconds: number, cameraWorldPosition: Vector3, resolveStop: StopResolver): void {
     if (this.phase === "transit") {
-      this.elapsed = Math.min(this.elapsed + deltaSeconds, this.profile!.totalSeconds);
-      this.currentSpeed = evaluateFlightProfile(this.profile!, this.elapsed, this.root.position);
-      evaluateFlightRotation(this.profile!, this.elapsed, this.qPrograde, this.qRetrograde, this.root.rotationQuaternion!);
-      this.etaSeconds = this.profile!.totalSeconds - this.elapsed;
-      if (this.elapsed >= this.profile!.totalSeconds) this.arrive(resolveStop);
+      const leg = this.liveLeg!;
+      this.elapsed = Math.min(this.elapsed + deltaSeconds, leg.profile.totalSeconds);
+      this.currentSpeed = evaluateFlightProfile(leg.profile, this.elapsed, this.root.position);
+      evaluateFlightRotation(leg.profile, this.elapsed, leg.qPrograde, leg.qRetrograde, this.root.rotationQuaternion!);
+      this.etaSeconds = leg.profile.totalSeconds - this.elapsed;
+      if (this.elapsed >= leg.profile.totalSeconds) this.arrive(resolveStop);
     } else {
       this.currentSpeed = 0;
       this.etaSeconds = 0;
@@ -174,9 +189,10 @@ export class Ship {
   private arrive(resolveStop: StopResolver): void {
     // Snaps to the destination's ACTUAL current position, erasing the fixed-point solver's
     // small residual error - cheap, and always exactly correct regardless of iteration count.
-    this.currentDestination!.predictWorldPositionAt(0, this.root.position);
-    this.currentDock = this.currentDestination;
-    this.phase = "docked";
+    const destination = this.liveLeg!.destination;
+    destination.predictWorldPositionAt(0, this.root.position);
+    this.currentDock = destination;
+    this.liveLeg = null;
     this.dwellRemaining = this.def.dwellSeconds;
     this.trajectoryLine?.dispose();
     this.trajectoryLine = null;
@@ -197,9 +213,7 @@ export class Ship {
     const destination = resolveStop(this.def.route[this.routeIndex]);
     this.currentDock!.predictWorldPositionAt(leadSeconds, tmpPlannedFrom);
     const result = solveRendezvous(this.currentDock!, tmpPlannedFrom, destination, this.def.cruiseSpeed, leadSeconds);
-    this.plannedProfile = buildFlightProfile(tmpPlannedFrom, result.arrivalPosition, result.travelSeconds);
-    computeFlightRotations(this.plannedProfile, this.plannedQPrograde, this.plannedQRetrograde);
-    this.plannedDestination = destination;
+    this.plannedLeg = planLeg(tmpPlannedFrom, destination, result.arrivalPosition, result.travelSeconds);
   }
 
   /** Consumes whatever planNextLeg already solved (back when this ship docked, or at
@@ -207,32 +221,24 @@ export class Ship {
    * already-made plan, the same "precompute once, apply cheaply" idea as CelestialOrbit's own
    * position table. */
   private departNext(): void {
-    this.profile = this.plannedProfile!;
-    this.qPrograde.copyFrom(this.plannedQPrograde);
-    this.qRetrograde.copyFrom(this.plannedQRetrograde);
-    this.currentDestination = this.plannedDestination;
+    this.liveLeg = this.plannedLeg!;
+    this.plannedLeg = null;
     this.currentDock = null;
     // Snaps to the planned departure point in case update()'s per-frame dock-tracking above drifted
     // even slightly from the exact position planNextLeg predicted (floating-point residual only -
     // both read the same dock's predictWorldPositionAt, just moments apart).
-    this.root.position.copyFrom(this.profile.from);
+    this.root.position.copyFrom(this.liveLeg.profile.from);
     this.elapsed = 0;
-    this.phase = "transit";
 
     this.trajectoryLine?.dispose();
     this.trajectoryLine = MeshBuilder.CreateDashedLines(
       `${this.def.id}Trajectory`,
-      { points: [this.profile.from, this.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
+      { points: [this.liveLeg.profile.from, this.liveLeg.profile.to], dashSize: TRAJECTORY_DASH_SIZE, gapSize: TRAJECTORY_GAP_SIZE },
       this.scene,
     );
-    // LinesMesh's own default shader material has no logarithmic-depth support - at this scene's
-    // huge near/far ratio that drew a ship's trajectory in front of/behind planets in the wrong
-    // order ("ship lines aren't ordered right") - same fix already used for orbit lines (see
-    // CelestialOrbit.createOrbitLine's own comment) and asteroids/stations (hullTexture.ts) - a
-    // plain unlit StandardMaterial gets both logarithmic depth and correct alpha blending for
-    // free. Reuses the one shared trajectoryMaterial created in the constructor rather than a
-    // fresh one each departure - Mesh.dispose() doesn't dispose its material by default, and a
-    // ship departs many times over a session.
+    // Reuses the one shared trajectoryMaterial created in the constructor (see its own comment)
+    // rather than a fresh one each departure - Mesh.dispose() doesn't dispose its material by
+    // default, and a ship departs many times over a session.
     this.trajectoryLine.material = this.trajectoryMaterial;
     this.trajectoryLine.isPickable = false;
     this.trajectoryLine.setEnabled(this.trajectoryVisible);

@@ -1,11 +1,8 @@
-import type { Vector3 } from "@babylonjs/core";
+import { Vector3 } from "@babylonjs/core";
 import type { CelestialBody } from "./celestialBody";
+import { easeInOutCubic } from "../terrain/mathUtils";
 
 const TRANSITION_DURATION_SECONDS = 5.0;
-
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
 
 /**
  * The "Actual scale" <-> "Gameplay scale" orbital-distance toggle (default key: `` ` ``) - see
@@ -45,16 +42,28 @@ class OrbitalScale {
   }
 
   /** Where `body` would currently be (world space) at pure gameplay scale, regardless of the
-   * live blend - exploits the fact that a star-orbiting body's position is purely
-   * `unitEllipse * semiMajorAxis`, so it's just the body's actual current position rescaled by
-   * gameplaySemiMajorAxis/currentSemiMajorAxis. Only valid for a body whose orbitNode sits
-   * directly at the star's world origin (every planet - see CelestialOrbit's own class doc
-   * comment) - never called with a moon's body since no Base/Station orbits one today. Used by
+   * live blend - exploits the fact that a body's position relative to its own orbital focus is
+   * purely `unitEllipse * semiMajorAxis`, so it's just that LOCAL offset rescaled by
+   * gameplaySemiMajorAxis/currentSemiMajorAxis. For a star-orbiting body that local offset IS
+   * the world position (orbitNode sits directly at the star's world origin - see CelestialOrbit's
+   * own class doc comment); for a moon (a Base/Station can orbit one - e.g. the Moon - since a
+   * later diff added a route there) it's only the offset from its parent planet, so this recurses
+   * through `parentBody` and adds the parent's own gameplay-equivalent world position. Used by
    * Ship.departNext (via shipTransit.ts) to keep travel time invariant across the orbital-scale
    * toggle - see that call site's own comment for why. */
   gameplayPositionOf(body: CelestialBody, out: Vector3): Vector3 {
     const ratio = body.gameplaySemiMajorAxis / body.orbit.semiMajorAxis;
     out.copyFrom(body.orbit.orbitNode.position).scaleInPlace(ratio);
+    if (body.parentBody) {
+      // A fresh Vector3, not the shared tmpParentGameplay scratch: for a 2+-level parentBody
+      // chain, reusing one shared scratch across recursive calls means an inner call's write
+      // clobbers the outer call's own in-progress `out` (also tmpParentGameplay) before the
+      // outer addInPlace below reads it - silently dropping the middle body's own local offset.
+      // Not triggered by today's BODY_DEFS (moons never nest), but wrong for any future one that
+      // does. This recursion is only ever a handful of levels deep and not a per-frame hot path
+      // (called from ship departure planning, not every frame), so the extra allocation is cheap.
+      out.addInPlace(this.gameplayPositionOf(body.parentBody, new Vector3()));
+    }
     return out;
   }
 }

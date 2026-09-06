@@ -1,4 +1,4 @@
-import { Matrix, Vector3, type AbstractEngine, type Scene } from "@babylonjs/core";
+import { Matrix, Vector3, Viewport, type AbstractEngine, type Scene } from "@babylonjs/core";
 import { orbitLineColorFor, type SolarSystem } from "../solarSystem/solarSystem";
 
 /** Kept off the very edge of the viewport so the arrow's own size doesn't get clipped. */
@@ -13,8 +13,13 @@ const ARROW_ALPHA = 0.2;
  * plus a small gap. */
 const LABEL_OFFSET_PX = 16;
 
-const tmpIdentity = Matrix.Identity(); // world matrix for Project() - bodies' positions are already in world space
+const tmpIdentity = Matrix.Identity(); // world matrix for ProjectToRef() - bodies' positions are already in world space
 const tmpToBody = new Vector3();
+const tmpForward = new Vector3();
+const tmpRight = new Vector3();
+const tmpUp = new Vector3();
+const tmpScreenPos = new Vector3();
+const tmpViewport = new Viewport(0, 0, 0, 0);
 
 /**
  * Space-fighter-game-style off-screen indicators: an arrow pinned to whichever screen edge is
@@ -25,7 +30,7 @@ const tmpToBody = new Vector3();
  * a real mesh) - this covers every body at every distance, exactly when it's NOT already visibly
  * on screen some other way.
  *
- * The on/off-screen check reuses the same Vector3.Project() + in-front-of-camera test the
+ * The on/off-screen check reuses the same Vector3.ProjectToRef() + in-front-of-camera test the
  * selection reticle and BodyIconsUI already rely on. Positioning the arrow itself, though, works
  * in the camera's own local right/up basis instead of a real screen projection: the angle a
  * target sits at around the camera's forward axis (from local right/up components alone,
@@ -76,10 +81,10 @@ export class OffscreenIndicatorUI {
     if (!camera) return;
 
     const camPos = camera.globalPosition;
-    const forward = camera.getDirection(Vector3.Forward());
-    const right = camera.getDirection(Vector3.Right());
-    const up = camera.getDirection(Vector3.Up());
-    const viewport = camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
+    camera.getDirectionToRef(Vector3.LeftHandedForwardReadOnly, tmpForward);
+    camera.getDirectionToRef(Vector3.RightReadOnly, tmpRight);
+    camera.getDirectionToRef(Vector3.UpReadOnly, tmpUp);
+    const viewport = camera.viewport.toGlobalToRef(this.engine.getRenderWidth(), this.engine.getRenderHeight(), tmpViewport);
     const transform = this.scene.getTransformMatrix();
     const width = this.engine.getRenderWidth();
     const height = this.engine.getRenderHeight();
@@ -91,10 +96,10 @@ export class OffscreenIndicatorUI {
       const worldPos = this.solarSystem.bodies[i].orbit.spinNode.getAbsolutePosition();
       worldPos.subtractToRef(camPos, tmpToBody);
 
-      const inFront = Vector3.Dot(tmpToBody, forward) > 0;
+      const inFront = Vector3.Dot(tmpToBody, tmpForward) > 0;
       if (inFront) {
-        const screenPos = Vector3.Project(worldPos, tmpIdentity, transform, viewport);
-        if (screenPos.x >= 0 && screenPos.x <= viewport.width && screenPos.y >= 0 && screenPos.y <= viewport.height) {
+        Vector3.ProjectToRef(worldPos, tmpIdentity, transform, viewport, tmpScreenPos);
+        if (tmpScreenPos.x >= 0 && tmpScreenPos.x <= viewport.width && tmpScreenPos.y >= 0 && tmpScreenPos.y <= viewport.height) {
           // On screen and in front - the real mesh (or BodyIconsUI's own far-away marker)
           // already shows it, no indicator needed.
           el.hidden = true;
@@ -106,8 +111,8 @@ export class OffscreenIndicatorUI {
       // of tmpToBody alone (ignoring depth/forward entirely) give exactly this, whether the body
       // is off to the side or behind the camera - see the class doc comment for why. Down
       // because DOM Y increases downward while camera "up" is the opposite sense.
-      let dx = Vector3.Dot(tmpToBody, right);
-      let dy = -Vector3.Dot(tmpToBody, up);
+      let dx = Vector3.Dot(tmpToBody, tmpRight);
+      let dy = -Vector3.Dot(tmpToBody, tmpUp);
       if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) dy = -1; // dead-on behind with no lateral bias at all - default to "up"
 
       // Ray-from-center-to-rectangle-edge intersection: scale (dx, dy) so whichever axis hits

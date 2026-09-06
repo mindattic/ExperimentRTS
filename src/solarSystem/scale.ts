@@ -22,24 +22,45 @@ export const STAR_RADIUS = 350;
  * so this comes out SMALLER than the gameplay placeholder above (~130 vs 350 units) - a genuinely
  * to-scale solar system famously makes everything read as a tiny dot at real distances, the sun
  * included; this isn't a compromise, it's what "true size" actually looks like at this anchor. */
-export const STAR_RADIUS_ACTUAL = EARTH_DISTANCE * (695700 / 149597870.7);
+const AU_IN_KM = 149597870.7;
+export const STAR_RADIUS_ACTUAL = EARTH_DISTANCE * (695700 / AU_IN_KM);
 
-/**
- * Compresses a real AU distance into scene units. Exponent < 1 keeps far bodies reachable.
- * Tuned (with the eccentricity table below) so no two neighboring orbits' radial bands -
- * [periapsis, apoapsis] plus both bodies' own radii - ever overlap, i.e. planets can never
- * physically collide even at worst-case orbital phase. Verified numerically (every adjacent
- * pair keeps a >500 unit margin) rather than derived analytically - see the plan notes.
- *
- * Raised from 0.65 to 0.72 ("orbits need to be wider apart") - a single global exponent can't
- * fully equalize every pair's spacing (Venus/Earth are irreducibly the tightest, both close in
- * AU and both large bodies - even removing all compression, exponent 1.0, only takes their
- * gap-to-body-size ratio from 1.4x to ~2x, while ballooning Eris from ~435,000 to 1,904,000
- * units), so this is a modest, cheap widening everywhere - the real overlap fix is
- * maxSafePersonalSpaceRadius below, which every moon/station orbit is actually checked against.
- */
+/** Everything at or inside this AU distance (Mercury..Mars) uses INNER_COMPRESSION_EXPONENT,
+ * unchanged from before this was made piecewise - Venus/Earth are already the tightest-spaced
+ * pair in the system (see INNER_COMPRESSION_EXPONENT's own comment), so there's zero headroom to
+ * compress the inner system further without them overlapping. Bodies farther than this (Mars
+ * itself is the seam, included in the inner segment) get OUTER_COMPRESSION_EXPONENT instead - a
+ * much steeper curve, safe to use out there since AU gaps between outer bodies are proportionally
+ * much larger relative to their own sizes (see the self-check below, which verified this value).
+ * Set to Mars's own auDistance (BODY_DEFS below) - kept in sync manually since these constants
+ * are defined above that array. */
+const DRAMATIC_SCALE_ANCHOR_AU = 1.52;
+/** Compresses a real AU distance into scene units, for au <= DRAMATIC_SCALE_ANCHOR_AU. Exponent
+ * < 1 keeps far bodies reachable. Raised from 0.65 to 0.72 ("orbits need to be wider apart") - a
+ * single global exponent can't fully equalize every pair's spacing (Venus/Earth are irreducibly
+ * the tightest, both close in AU and both large bodies - even removing all compression, exponent
+ * 1.0, only takes their gap-to-body-size ratio from 1.4x to ~2x), so this is a modest, cheap
+ * widening for the inner system specifically - see maxSafePersonalSpaceRadius below, which every
+ * moon/station orbit is actually checked against. */
+const INNER_COMPRESSION_EXPONENT = 0.72;
+/** Compresses a real AU distance into scene units, for au > DRAMATIC_SCALE_ANCHOR_AU - much
+ * steeper than the inner exponent so "Actual scale" mode (see orbitalScale.ts) reads as
+ * genuinely dramatic for Jupiter onward ("it grows things a little but should be incredibly
+ * dramatic") instead of the ~1.6x-3x a single global 0.72 exponent produced. 0.4 is the largest
+ * safe value with comfortable margin below it - Jupiter/Saturn (physically large, and the
+ * closest outer pair in AU-ratio terms) are the binding constraint: verified numerically (not
+ * hand-derived - an early hand calculation here was wrong) that 0.4 leaves ~1876 units of
+ * clearance there, while lower values (~0.35 and below) make them overlap. See the self-check
+ * below, which enforces this for every consecutive pair, not just Jupiter/Saturn. */
+const OUTER_COMPRESSION_EXPONENT = 0.4;
+
 export function sceneDistance(au: number): number {
-  return EARTH_DISTANCE * Math.pow(au, 0.72);
+  if (au <= DRAMATIC_SCALE_ANCHOR_AU) return EARTH_DISTANCE * Math.pow(au, INNER_COMPRESSION_EXPONENT);
+  // Continuous at the seam by construction: this evaluates to EARTH_DISTANCE *
+  // DRAMATIC_SCALE_ANCHOR_AU^INNER_COMPRESSION_EXPONENT (the inner formula's own value at the
+  // seam) when au === DRAMATIC_SCALE_ANCHOR_AU, since (au/anchor)^exp is 1 there.
+  const anchorDistance = EARTH_DISTANCE * Math.pow(DRAMATIC_SCALE_ANCHOR_AU, INNER_COMPRESSION_EXPONENT);
+  return anchorDistance * Math.pow(au / DRAMATIC_SCALE_ANCHOR_AU, OUTER_COMPRESSION_EXPONENT);
 }
 
 /** 1 AU in scene units - computed once here rather than re-deriving `sceneDistance(1)` wherever
@@ -173,6 +194,27 @@ export function bodyRadius(def: BodyDef): number {
   return EARTH_RADIUS * def.relativeRadius;
 }
 
+/** Earth's TRUE radius (6,371 km), expressed on the same linear km-per-unit anchor as
+ * STAR_RADIUS_ACTUAL/actualSceneDistance (1 AU = EARTH_DISTANCE units) - NOT the compressed
+ * gameplay EARTH_RADIUS constant, which is a "fun over accuracy" visual size unrelated to real
+ * distances. Mixing that gameplay constant into "actual" scale math was the bug: every body's
+ * actualBodyRadius() came out ~1678x too big relative to actualSceneDistance() (e.g. Jupiter's
+ * true ~71,492km radius is only ~13 scene units at this anchor, not the 22,400 the old formula
+ * produced), so gas giants visually swallowed the correctly-real gaps to their neighbors instead
+ * of reading as the tiny dots they truly are at real interplanetary distances. */
+const EARTH_RADIUS_ACTUAL = EARTH_DISTANCE * (6371 / AU_IN_KM);
+
+/** The "Actual scale" counterpart to bodyRadius() - real relative size (def.realDiameterRatio,
+ * NOT the compressed relativeRadius) anchored on EARTH_RADIUS_ACTUAL (Earth's true radius, same
+ * km-per-unit scale as every other "actual" distance/size), so Actual scale is a genuine 1:1
+ * real-world representation, not just "real ratios on a still-inflated anchor." What CelestialBody
+ * blends its rendered size toward (via a uniform spinNode.scaling factor - see solarSystem.ts)
+ * when Actual scale is toggled on - "planets should also look their real size, not just move to
+ * their real distance." */
+export function actualBodyRadius(def: BodyDef): number {
+  return EARTH_RADIUS_ACTUAL * def.realDiameterRatio;
+}
+
 /** How much of a body's actual clear space to a neighboring body a moon/station orbit is
  * allowed to use - leaves comfortable headroom rather than running right up to the edge. */
 const PERSONAL_SPACE_SAFETY_FRACTION = 0.7;
@@ -215,6 +257,29 @@ for (const def of BODY_DEFS) {
     throw new Error(
       `${def.name}'s orbit radius (${radius.toFixed(0)}) exceeds ${parent.name}'s safe personal-space radius (${safeMax.toFixed(0)}) - it would reach into a neighboring body's territory. Lower moonOrbitRadiusInParentRadii.`,
     );
+  }
+}
+
+// Same "fail loudly at load time" philosophy as the moon check above, but for the planets
+// THEMSELVES: maxSafePersonalSpaceRadius already computes each body's clearance to its
+// neighbors internally, but never asserted that clearance is non-negative on its own - it was
+// only ever safe before because INNER_COMPRESSION_EXPONENT (0.72) happened to be gentle
+// everywhere. Piecewise scaling (see DRAMATIC_SCALE_ANCHOR_AU above) makes the outer segment
+// deliberately much steeper, so this guards against a future BODY_DEFS/exponent edit
+// accidentally compressing two neighboring planets into each other (this is exactly how
+// OUTER_COMPRESSION_EXPONENT's own safe value was found - by tightening this check until it
+// failed, then backing off).
+{
+  const starOrbiting = BODY_DEFS.filter((d) => !d.orbitsAround);
+  for (let i = 0; i < starOrbiting.length - 1; i++) {
+    const a = starOrbiting[i];
+    const b = starOrbiting[i + 1];
+    const clearance = sceneDistance(b.auDistance) - sceneDistance(a.auDistance) - bodyRadius(a) - bodyRadius(b);
+    if (clearance < 0) {
+      throw new Error(
+        `${a.name} and ${b.name}'s orbits overlap by ${(-clearance).toFixed(0)} units at gameplay scale - lower OUTER_COMPRESSION_EXPONENT (or INNER_COMPRESSION_EXPONENT, if the overlap is inside DRAMATIC_SCALE_ANCHOR_AU).`,
+      );
+    }
   }
 }
 
@@ -286,9 +351,10 @@ export const COLOR_MAP_SOURCES: Partial<Record<string, ColorMapSource>> = {
 function computeSharedHeightmapDensity(): number {
   let density = Infinity;
   for (const def of BODY_DEFS) {
-    const source = HEIGHTMAP_SOURCES[def.name];
-    if (!source) continue;
-    density = Math.min(density, source.sourceWidth / def.realDiameterRatio);
+    const heightmapSource = HEIGHTMAP_SOURCES[def.name];
+    if (heightmapSource) density = Math.min(density, heightmapSource.sourceWidth / def.realDiameterRatio);
+    const colorSource = COLOR_MAP_SOURCES[def.name];
+    if (colorSource) density = Math.min(density, colorSource.sourceWidth / def.realDiameterRatio);
   }
   return density;
 }

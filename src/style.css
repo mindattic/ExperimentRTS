@@ -548,9 +548,16 @@ body {
   box-shadow: 0 0 4px rgba(207, 216, 255, 0.9);
 }
 
-/* Within 1 AU the real body is already visible - only the always-on label persists there. */
+/* Within 1 AU the real body is already visible - only the always-on label persists there. Not
+   clickable at that range: the real mesh (and anything rendered near it, e.g. a ship/moon) is
+   right there for scene.pick() to resolve instead, and this label sits at the exact same screen
+   point so it would otherwise intercept clicks meant for that closer geometry. */
 .body-icon-close .body-icon-dot {
   display: none;
+}
+
+.body-icon-close {
+  pointer-events: none;
 }
 
 .body-icon-label {

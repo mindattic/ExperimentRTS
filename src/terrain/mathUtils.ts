@@ -11,6 +11,10 @@ export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
+export function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
 /** Deterministic hash of 3 integers/floats into [0, 1). */
 export function hash3(x: number, y: number, z: number): number {
   const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453123;

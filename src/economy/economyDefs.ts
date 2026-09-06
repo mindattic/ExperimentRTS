@@ -68,7 +68,11 @@ export const BASE_DEFS: readonly BaseDef[] = BODY_DEFS.filter((def) => def.kind 
 // "planet radii" here already reads as a huge distance once compared to nearby orbits/moons
 // (earthYard at 6x literally sat farther out than the Moon at the old 9x-of-a-*much*-smaller-
 // radii value). 1.3x keeps every station's torus sitting close against its planet, per "space
-// dock should be right up against the planet."
+// dock should be right up against the planet." Jupiter and Saturn are the exception: they're the
+// closest outer pair in AU-ratio terms (see scale.ts's OUTER_COMPRESSION_EXPONENT comment - only
+// ~1876 units of clearance between them), so maxSafePersonalSpaceRadius allows Jupiter only
+// ~1.164x and Saturn only ~1.188x its own radius - both below the blanket 1.3x. 1.15x for both
+// keeps comfortable margin under those tighter limits.
 export const STATION_DEFS: readonly StationDef[] = [
   { id: "earthYard", name: "Earth Orbital Yard", faction: "solFederation", crew: 220, cargo: "Refined metals", orbitsAround: "Earth", orbitRadiusInParentRadii: 1.3 },
   { id: "marsRelay", name: "Mars High Station", faction: "solFederation", crew: 90, cargo: "Ice, water", orbitsAround: "Mars", orbitRadiusInParentRadii: 1.3 },
@@ -76,8 +80,8 @@ export const STATION_DEFS: readonly StationDef[] = [
   { id: "plutoOutpost", name: "Pluto Outpost", faction: "beltConsortium", crew: 30, cargo: "Exotic ices", orbitsAround: "Pluto", orbitRadiusInParentRadii: 1.3 },
   // Gas giants have no solid ground for a Base, but a Station only ever orbits - no landable
   // surface required - so these are the fleet's first gas-giant stops.
-  { id: "jupiterHighport", name: "Jupiter Highport", faction: "solFederation", crew: 150, cargo: "Fuel, hydrogen", orbitsAround: "Jupiter", orbitRadiusInParentRadii: 1.3 },
-  { id: "saturnRingStation", name: "Saturn Ring Station", faction: "beltConsortium", crew: 60, cargo: "Rare gases", orbitsAround: "Saturn", orbitRadiusInParentRadii: 1.3 },
+  { id: "jupiterHighport", name: "Jupiter Highport", faction: "solFederation", crew: 150, cargo: "Fuel, hydrogen", orbitsAround: "Jupiter", orbitRadiusInParentRadii: 1.15 },
+  { id: "saturnRingStation", name: "Saturn Ring Station", faction: "beltConsortium", crew: 60, cargo: "Rare gases", orbitsAround: "Saturn", orbitRadiusInParentRadii: 1.15 },
 ];
 
 // Same self-check scale.ts runs for moons, applied here for stations - see
